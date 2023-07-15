@@ -90,3 +90,18 @@ while True:
 
     # Adjust the moving average
     weights[ uid_to_query ] =  ( 1 - alpha ) * weights[ uid_to_query ] + alpha * next_weight_for_uid
+
+    # Optionally set weights
+    current_block = sub.block
+    if current_block % 100 == 0:
+        uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+            uids = meta.uids,
+            weights = weights,
+            netuid = config.netuid
+        )
+        sub.set_weights(
+            wallet = wallet,
+            netuid = config.netuid,
+            weights = processed_weights,
+            uids = uids,
+        )
