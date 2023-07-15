@@ -81,12 +81,12 @@ while True:
     generated_embedding_numpy = generated_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
 
     # Lets get the cosine similarity between the ask and the response.
-    prompt_inputs = text_to_embedding_tokenizer( response.text, return_tensors="pt" )
+    prompt_inputs = text_to_embedding_tokenizer( prompt, return_tensors="pt" )
     prompt_embedding = text_to_embedding_model(**prompt_inputs)
     prompt_embedding_numpy = prompt_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
 
     # Get cosine similarity
-    next_weight_for_uid = cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy)
+    next_weight_for_uid = cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy )
 
     # Adjust the moving average
     weights[ uid_to_query ] =  ( 1 - alpha ) * weights[ uid_to_query ] + alpha * next_weight_for_uid
