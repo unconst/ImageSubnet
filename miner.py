@@ -17,4 +17,25 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+# Imports
+import torch
+import bittensor as bt
+bt.debug()
+
+class GetImage( bt.Synapse ):
+    image: list[ bt.Tensor ]
+
+async def f( synapse: T ) -> T:
+    return synapse
+
+def b( synapse: T ) -> bool:
+    return False
+
+def p( synapse: T ) -> float:
+    return 0.0
+
+def v( synapse: T ) -> None:
+    pass
+
+axon = bt.axon().attach( f, b, p, v ).start()
 
