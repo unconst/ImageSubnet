@@ -19,13 +19,83 @@
 
 # Imports
 import torch
+import typing
+import pydantic
 import bittensor as bt
+import argparse
+
 bt.debug()
 
-class GetImage( bt.Synapse ):
-    image: list[ bt.Tensor ]
+parser = argparse.ArgumentParser()
+# add device to parser
+parser.add_argument('--device', type=str, default='cuda')
+# add model as either 'huggingface/model_path' or 'absolute/path/to/model.safetensors' alternatively pass in 'miner.model'
+parser.add_argument('--miner.model', type=str, default='lpw/stable-diffusion')
+parser.add_argument('--miner.max_batch_size', type=int, default=4)
+
+config = bt.config( parser )
+
+
+# Stable diffusion
+from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
+
+import torchvision.transforms as transforms
+from protocol import TextToImage
+
+model_path = config.miner.model
+# Lets instantiate the stable diffusion model.
+if model_path.endswith('.safetensors') or model_path.endswith('.ckpt') or model_path.startswith('http'):
+    # Load from local file or from url.
+    model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16 ).to( config.device )
+else:
+    # Load from huggingface model hub.
+    model =  StableDiffusionPipeline.from_pretrained( config.model , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16 ).to( config.device )
+
+img2img = StableDiffusionImg2ImgPipeline(**model.components)
+
+
+transform = transforms.Compose([
+    transforms.PILToTensor()
+])
 
 async def f( synapse: T ) -> T:
+
+    seed = synapse.seed
+
+    if(seed == -1):
+        seed = torch.randint(1000000000, (1,)).item()
+
+    generator = torch.Generator(device=config.device).manual_seed(seed)
+
+    if synapse.num_images_per_prompt > config.miner.max_batch_size:
+        raise ValueError(f"num_images_per_prompt ({synapse.num_images_per_prompt}) must be less than or equal to max_batch_size ({config.miner.max_batch_size})")
+
+    if synapse.image is not None:
+        output = img2img(
+            image = synapse.image,
+            num_images_per_prompt = synapse.num_images_per_prompt,
+            num_inference_steps = synapse.num_inference_steps,
+            guidance_scale = synapse.guidance_scale,
+            negative_prompt = synapse.negative_prompt,
+            generator = generator
+        )
+    else:
+        output = model(
+            prompt = synapse.text,
+            height = synapse.height,
+            width = synapse.width,
+            num_images_per_prompt = synapse.num_images_per_prompt,
+            num_inference_steps = synapse.num_inference_steps,
+            guidance_scale = synapse.guidance_scale,
+            negative_prompt = synapse.negative_prompt,
+            generator = generator
+        )
+
+    synapse.images = []
+    for image in output.images:
+        img_tensor = transform(image)
+        synapse.images.append( bt.Tensor.serialize( img_tensor ) )
+
     return synapse
 
 def b( synapse: T ) -> bool:

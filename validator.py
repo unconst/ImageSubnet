@@ -56,6 +56,9 @@ prompt_generation_pipe = pipeline("text-generation", model="succinctly/text2imag
 alpha = 0.01
 weights = torch.rand_like( meta.uids, dtype = torch.float32 )
 
+ # Amount of images
+num_images = 1
+
 while True:
 
     # Get next uid to query.
@@ -68,25 +71,43 @@ while True:
     prompt = prompt_generation_pipe( next(dataset) )
 
     # Get response from endpoint.
-    response = dend.query( axon_to_query, TextToImage( text = prompt ) )
+    response = dend.query( axon_to_query, TextToImage( text = prompt, num_images_per_prompt = num_images ) )
 
-    # Lets get the image caption.
-    pixel_values = response.image.pixel_values
-    generated_ids = image_to_text_model.generate(pixel_values)
-    generated_text = image_to_text_tokenizer.batch_decode( generated_ids, skip_special_tokens=True )[0]
+    if(response == None):
+        bt.logging.trace(f"Got no response from {uid_to_query}")
+        continue
 
-    # Lets get the cosine similarity between the ask and the response.
-    generate_text_inputs = text_to_embedding_tokenizer( generated_text, return_tensors="pt" )
-    generated_embedding = text_to_embedding_model(**generate_text_inputs)
-    generated_embedding_numpy = generated_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
+    if(response.images == None or len(response.images) == 0):
+        bt.logging.trace(f"Got no images from {uid_to_query}")
+        continue
 
-    # Lets get the cosine similarity between the ask and the response.
-    prompt_inputs = text_to_embedding_tokenizer( prompt, return_tensors="pt" )
-    prompt_embedding = text_to_embedding_model(**prompt_inputs)
-    prompt_embedding_numpy = prompt_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
+    # slice the images requested from the response
+    images = response.images[:num_images]
 
-    # Get cosine similarity
-    next_weight_for_uid = cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy )
+    weights = []
+
+    for image in images:
+        # Lets get the image caption.
+        pixel_values = image.pixel_values
+        generated_ids = image_to_text_model.generate(pixel_values)
+        generated_text = image_to_text_tokenizer.batch_decode( generated_ids, skip_special_tokens=True )[0]
+
+        # Lets get the cosine similarity between the ask and the response.
+        generate_text_inputs = text_to_embedding_tokenizer( generated_text, return_tensors="pt" )
+        generated_embedding = text_to_embedding_model(**generate_text_inputs)
+        generated_embedding_numpy = generated_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
+
+        # Lets get the cosine similarity between the ask and the response.
+        prompt_inputs = text_to_embedding_tokenizer( prompt, return_tensors="pt" )
+        prompt_embedding = text_to_embedding_model(**prompt_inputs)
+        prompt_embedding_numpy = prompt_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
+
+        # Get cosine similarity
+        weight_for_image = cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy )
+        weights.append( weight_for_image )
+    
+    # Get the average weight for the uid.
+    next_weight_for_uid = torch.mean( torch.tensor( weights ) )
 
     # Adjust the moving average
     weights[ uid_to_query ] =  ( 1 - alpha ) * weights[ uid_to_query ] + alpha * next_weight_for_uid
