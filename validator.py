@@ -7,6 +7,9 @@ import typing
 import pydantic
 import argparse
 import bittensor as bt
+import numpy as np
+
+import torchvision.transforms as transforms
 
 bt.trace()
 
@@ -65,15 +68,13 @@ while True:
     uids = meta.uids.tolist() 
     # Get next uid to query.
     uid_to_query = random.choice( uids )
-    
 
     # Get UID endpoint information.
-    axon_to_query = meta.axons[ 0 ]
+    axon_to_query = meta.axons[ uid_to_query ]
 
     # Generate a random synthetic prompt.
     prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']
 
-    bt.logging.trace(f"Querying {uid_to_query} with prompt: {prompt}")
 
     # Get response from endpoint.
     response = dend.query( axon_to_query, TextToImage( text = prompt, num_images_per_prompt = num_images, negative_prompt="" ) )
@@ -88,15 +89,18 @@ while True:
 
     # slice the images requested from the response
     images = response.images[:num_images]
-    bt.logging.trace(f"Got {len(images)} images from {uid_to_query}")
+    _weights = []
+    n = 0
 
-    weights = []
-
-    for image in images:
+    for tensor_image in images:
+        # Lets get the image.
+        image = transforms.ToPILImage()( bt.Tensor.deserialize(tensor_image) )
         # Lets get the image caption.
-        pixel_values = image.pixel_values
+        pixel_values = image_processor(image, return_tensors='pt').pixel_values
         generated_ids = image_to_text_model.generate(pixel_values)
         generated_text = image_to_text_tokenizer.batch_decode( generated_ids, skip_special_tokens=True )[0]
+
+        bt.logging.trace(f"\nReal prompt: {prompt} \ngenerated prompt: {generated_text}")
 
         # Lets get the cosine similarity between the ask and the response.
         generate_text_inputs = text_to_embedding_tokenizer( generated_text, return_tensors="pt" )
@@ -110,14 +114,18 @@ while True:
 
         # Get cosine similarity
         weight_for_image = cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy )
-        weights.append( weight_for_image )
+        bt.logging.trace(f"Got weight {weight_for_image} for {uid_to_query} and image {n}")
+        _weights.append( weight_for_image )
+        n += 1
     
-    # Get the average weight for the uid.
-    next_weight_for_uid = torch.mean( torch.tensor( weights ) )
+    # Get the average weight for the uid from _weights.
+    next_weight_for_uid = np.mean( _weights )
     bt.logging.trace(f"Got average weight {next_weight_for_uid} for {uid_to_query}")
 
     # Adjust the moving average
-    weights[ uid_to_query ] =  ( 1 - alpha ) * weights[ uid_to_query ] + alpha * next_weight_for_uid
+    # weights[uid_to_query] = (1 - alpha) * _weights[uid_to_query] + alpha * next_weight_for_uid
+    # use np.concatenate to add the new weight to the weights tensor
+    weights[uid_to_query] = (1 - alpha) * weights[uid_to_query] + (alpha * next_weight_for_uid)
 
     # Optionally set weights
     current_block = sub.block
@@ -125,7 +133,8 @@ while True:
         uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
             uids = meta.uids,
             weights = weights,
-            netuid = config.netuid
+            netuid = config.netuid,
+            subtensor = sub,
         )
         sub.set_weights(
             wallet = wallet,
