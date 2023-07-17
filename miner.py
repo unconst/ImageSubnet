@@ -48,7 +48,7 @@ parser.add_argument('--netuid', type=int, default=64)
 parser.add_argument('--axon.port', type=int, default=3000)
 
 config = bt.config( parser )
-subtensor = bt.subtensor( 64, config=config )
+subtensor = bt.subtensor( 64, config=config, chain_endpoint=config.subtensor.chain_endpoint )
 
 
 # Stable diffusion
