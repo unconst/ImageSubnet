@@ -68,7 +68,7 @@ while True:
     
 
     # Get UID endpoint information.
-    axon_to_query = meta.axons[ 1 ]
+    axon_to_query = meta.axons[ 0 ]
 
     # Generate a random synthetic prompt.
     prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']

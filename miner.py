@@ -43,7 +43,9 @@ parser.add_argument('--miner.max_batch_size', type=int, default=4)
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 parser.add_argument('--wallet.hotkey', type=str, default='default')
 parser.add_argument('--wallet.name', type=str, default='default')
+parser.add_argument('--wallet.path', type=str, default='~/.bittensor/wallets')
 parser.add_argument('--netuid', type=int, default=64)
+parser.add_argument('--axon.port', type=int, default=3000)
 
 config = bt.config( parser )
 subtensor = bt.subtensor( 64, config=config )
@@ -53,7 +55,7 @@ subtensor = bt.subtensor( 64, config=config )
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 import torchvision.transforms as transforms
-from protocol import ImageToImage
+from protocol import TextToImage
 
 bt.logging.trace("Loading model: {}".format(config.miner.model))
 
@@ -75,7 +77,7 @@ transform = transforms.Compose([
     transforms.PILToTensor()
 ])
 
-async def f( synapse: ImageToImage ) -> ImageToImage:
+async def f( synapse: TextToImage ) -> TextToImage:
 
     seed = synapse.seed
 
@@ -118,13 +120,13 @@ async def f( synapse: ImageToImage ) -> ImageToImage:
 
     return synapse
 
-def b( synapse: ImageToImage ) -> bool:
+def b( synapse: TextToImage ) -> bool:
     return False
 
-def p( synapse: ImageToImage ) -> float:
+def p( synapse: TextToImage ) -> float:
     return 0.0
 
-def v( synapse: ImageToImage ) -> None:
+def v( synapse: TextToImage ) -> None:
     pass
 
 wallet = bt.wallet( config=config )
