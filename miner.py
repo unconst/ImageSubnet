@@ -91,7 +91,7 @@ async def f( synapse: TextToImage ) -> TextToImage:
     if synapse.num_images_per_prompt > config.miner.max_batch_size:
         raise ValueError(f"num_images_per_prompt ({synapse.num_images_per_prompt}) must be less than or equal to max_batch_size ({config.miner.max_batch_size})")
 
-    if synapse.image is not None:
+    try:
         # If we are doing image to image, we need to use a different pipeline.
         output = img2img(
             image = synapse.image,
@@ -101,7 +101,7 @@ async def f( synapse: TextToImage ) -> TextToImage:
             negative_prompt = synapse.negative_prompt,
             generator = generator
         )
-    else:
+    except:
         output = model(
             prompt = synapse.text,
             height = synapse.height,
