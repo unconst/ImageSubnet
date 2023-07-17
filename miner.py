@@ -42,6 +42,7 @@ parser.add_argument('--miner.model', type=str, default='prompthero/openjourney-v
 parser.add_argument('--miner.max_batch_size', type=int, default=4)
 
 config = bt.config( parser )
+subtensor = bt.subtensor( config )
 
 
 # Stable diffusion
@@ -126,7 +127,6 @@ def v( synapse: ImageToImage ) -> None:
 axon = bt.axon( config ).attach( f, b, p, v ).start()
 
 # serve axon
-subtensor = bt.subtensor( config )
 subtensor.serve_axon( axon )
 
 # keep process alive
