@@ -129,7 +129,7 @@ wallet = bt.wallet( config=config )
 axon = bt.axon( config, wallet=wallet).attach( f, b, p, v ).start()
 
 # serve axon
-subtensor.serve_axon( axon=axon )
+subtensor.serve_axon( axon=axon, netuid=config.netuid )
 
 # keep process alive
 bt.logging.trace('Miner running. ^C to exit.')
