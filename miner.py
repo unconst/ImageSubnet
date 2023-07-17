@@ -44,7 +44,7 @@ parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.
 parser.add_argument('--netuid', type=int, default=64)
 
 config = bt.config( parser )
-subtensor = bt.subtensor( config )
+subtensor = bt.subtensor( 64, config=config )
 
 
 # Stable diffusion
@@ -125,11 +125,11 @@ def p( synapse: ImageToImage ) -> float:
 def v( synapse: ImageToImage ) -> None:
     pass
 
-
-axon = bt.axon( config ).attach( f, b, p, v ).start()
+wallet = bt.wallet( config=config )
+axon = bt.axon( config, wallet=wallet).attach( f, b, p, v ).start()
 
 # serve axon
-subtensor.serve_axon( axon )
+subtensor.serve_axon( axon=axon )
 
 # keep process alive
 bt.logging.trace('Miner running. ^C to exit.')
