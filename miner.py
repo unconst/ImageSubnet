@@ -30,7 +30,7 @@ parser = argparse.ArgumentParser()
 # add device to parser
 parser.add_argument('--device', type=str, default='cuda')
 # add model as either 'huggingface/model_path' or 'absolute/path/to/model.safetensors' alternatively pass in 'miner.model'
-parser.add_argument('--miner.model', type=str, default='lpw/stable-diffusion')
+parser.add_argument('--miner.model', type=str, default='prompthero/openjourney-v4')
 parser.add_argument('--miner.max_batch_size', type=int, default=4)
 
 config = bt.config( parser )
@@ -41,6 +41,8 @@ from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 import torchvision.transforms as transforms
 from protocol import TextToImage
+
+bt.logging.trace("Loading model: {}".format(config.miner.model))
 
 model_path = config.miner.model
 # Lets instantiate the stable diffusion model.
