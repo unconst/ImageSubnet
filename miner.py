@@ -40,6 +40,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--device', type=str, default='cuda')
 parser.add_argument('--miner.model', type=str, default='prompthero/openjourney-v4')
 parser.add_argument('--miner.max_batch_size', type=int, default=4)
+parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
+parser.add_argument('--netuid', type=int, default=64)
 
 config = bt.config( parser )
 subtensor = bt.subtensor( config )
