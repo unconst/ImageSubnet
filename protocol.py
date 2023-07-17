@@ -3,6 +3,7 @@
 import typing
 import pydantic
 import bittensor as bt
+from typing import Union, TypeVar
 
 class TextToImage( bt.Synapse ):
     images: list[ bt.Tensor ]
@@ -17,3 +18,5 @@ class TextToImage( bt.Synapse ):
 
 class ImageToImage( TextToImage ):
     image: bt.Tensor = pydantic.Field( ... , allow_mutation = False)
+
+T = TypeVar('T', bound=Union[TextToImage, ImageToImage])

@@ -46,7 +46,7 @@ config = bt.config( parser )
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 import torchvision.transforms as transforms
-from protocol import TextToImage
+from protocol import T
 
 bt.logging.trace("Loading model: {}".format(config.miner.model))
 
