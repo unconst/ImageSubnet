@@ -17,6 +17,14 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+# Confirm minimum python version
+import sys
+
+required_version = (3, 9)
+
+if sys.version_info < required_version:
+    raise Exception(f"Python version {required_version[0]}.{required_version[1]} or higher is required.")
+
 # Imports
 import torch
 import typing
@@ -27,9 +35,7 @@ import argparse
 bt.debug()
 
 parser = argparse.ArgumentParser()
-# add device to parser
 parser.add_argument('--device', type=str, default='cuda')
-# add model as either 'huggingface/model_path' or 'absolute/path/to/model.safetensors' alternatively pass in 'miner.model'
 parser.add_argument('--miner.model', type=str, default='prompthero/openjourney-v4')
 parser.add_argument('--miner.max_batch_size', type=int, default=4)
 
@@ -51,7 +57,7 @@ if model_path.endswith('.safetensors') or model_path.endswith('.ckpt') or model_
     model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16 ).to( config.device )
 else:
     # Load from huggingface model hub.
-    model =  StableDiffusionPipeline.from_pretrained( config.model , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16 ).to( config.device )
+    model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16 ).to( config.device )
 
 img2img = StableDiffusionImg2ImgPipeline(**model.components)
 
@@ -64,15 +70,18 @@ async def f( synapse: T ) -> T:
 
     seed = synapse.seed
 
+    # Let's set a seed for reproducibility.
     if(seed == -1):
         seed = torch.randint(1000000000, (1,)).item()
 
     generator = torch.Generator(device=config.device).manual_seed(seed)
 
+    # Check if the batch size is valid.
     if synapse.num_images_per_prompt > config.miner.max_batch_size:
         raise ValueError(f"num_images_per_prompt ({synapse.num_images_per_prompt}) must be less than or equal to max_batch_size ({config.miner.max_batch_size})")
 
     if synapse.image is not None:
+        # If we are doing image to image, we need to use a different pipeline.
         output = img2img(
             image = synapse.image,
             num_images_per_prompt = synapse.num_images_per_prompt,

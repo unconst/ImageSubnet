@@ -5,7 +5,6 @@ import pydantic
 import bittensor as bt
 
 class TextToImage( bt.Synapse ):
-
     images: list[ bt.Tensor ]
     text: str = pydantic.Field( ... , allow_mutation = False)
     height: int = pydantic.Field( 512 , allow_mutation = False)
