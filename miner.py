@@ -46,7 +46,7 @@ config = bt.config( parser )
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 import torchvision.transforms as transforms
-from protocol import T
+from protocol import ImageToImage
 
 bt.logging.trace("Loading model: {}".format(config.miner.model))
 
@@ -66,7 +66,7 @@ transform = transforms.Compose([
     transforms.PILToTensor()
 ])
 
-async def f( synapse: T ) -> T:
+async def f( synapse: ImageToImage ) -> ImageToImage:
 
     seed = synapse.seed
 
@@ -109,13 +109,13 @@ async def f( synapse: T ) -> T:
 
     return synapse
 
-def b( synapse: T ) -> bool:
+def b( synapse: ImageToImage ) -> bool:
     return False
 
-def p( synapse: T ) -> float:
+def p( synapse: ImageToImage ) -> float:
     return 0.0
 
-def v( synapse: T ) -> None:
+def v( synapse: ImageToImage ) -> None:
     pass
 
 axon = bt.axon().attach( f, b, p, v ).start()
