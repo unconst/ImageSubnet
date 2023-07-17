@@ -123,7 +123,11 @@ def v( synapse: ImageToImage ) -> None:
     pass
 
 
-axon = bt.axon().attach( f, b, p, v ).start()
+axon = bt.axon( config ).attach( f, b, p, v ).start()
+
+# serve axon
+subtensor = bt.subtensor( config )
+subtensor.serve_axon( axon )
 
 # keep process alive
 bt.logging.trace('Miner running. ^C to exit.')

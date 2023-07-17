@@ -8,7 +8,7 @@ import pydantic
 import argparse
 import bittensor as bt
 
-bt.debug()
+bt.trace()
 
 # Import protocol
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -26,8 +26,9 @@ config = bt.config( parser )
 # Instantiate the bittensor objects.
 wallet = bt.wallet( config = config )
 sub = bt.subtensor( config = config )
-meta = bt.metagraph( config.netuid )
+meta = sub.metagraph( config.netuid )
 dend = bt.dendrite( wallet = wallet )
+print(meta.uids)
 
 # For cosine similarity.
 from sklearn.metrics.pairwise import cosine_similarity
@@ -46,7 +47,7 @@ image_processor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-c
 
 # Load prompt dataset.
 from datasets import load_dataset
-dataset = load_dataset("poloclub/diffusiondb")
+dataset = iter(load_dataset("poloclub/diffusiondb")['train'].to_iterable_dataset())
 
 # For prompt generation
 from transformers import pipeline
@@ -61,17 +62,21 @@ num_images = 1
 
 while True:
 
+    uids = meta.uids.tolist() 
     # Get next uid to query.
-    uid_to_query = random.choice( meta.uids.tolist() )
+    uid_to_query = random.choice( uids )
+    
 
     # Get UID endpoint information.
-    axon_to_query = meta.axon[ uid_to_query ]
+    axon_to_query = meta.axons[ 1 ]
 
     # Generate a random synthetic prompt.
-    prompt = prompt_generation_pipe( next(dataset) )
+    prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']
+
+    bt.logging.trace(f"Querying {uid_to_query} with prompt: {prompt}")
 
     # Get response from endpoint.
-    response = dend.query( axon_to_query, TextToImage( text = prompt, num_images_per_prompt = num_images ) )
+    response = dend.query( axon_to_query, TextToImage( text = prompt, num_images_per_prompt = num_images, negative_prompt="" ) )
 
     if(response == None):
         bt.logging.trace(f"Got no response from {uid_to_query}")
@@ -83,6 +88,7 @@ while True:
 
     # slice the images requested from the response
     images = response.images[:num_images]
+    bt.logging.trace(f"Got {len(images)} images from {uid_to_query}")
 
     weights = []
 
@@ -108,6 +114,7 @@ while True:
     
     # Get the average weight for the uid.
     next_weight_for_uid = torch.mean( torch.tensor( weights ) )
+    bt.logging.trace(f"Got average weight {next_weight_for_uid} for {uid_to_query}")
 
     # Adjust the moving average
     weights[ uid_to_query ] =  ( 1 - alpha ) * weights[ uid_to_query ] + alpha * next_weight_for_uid

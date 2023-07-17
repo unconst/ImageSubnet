@@ -6,7 +6,7 @@ import bittensor as bt
 from typing import Union, TypeVar
 
 class TextToImage( bt.Synapse ):
-    images: list[ bt.Tensor ]
+    images: list[ bt.Tensor ] = []
     text: str = pydantic.Field( ... , allow_mutation = False)
     height: int = pydantic.Field( 512 , allow_mutation = False)
     width: int = pydantic.Field( 512 , allow_mutation = False)

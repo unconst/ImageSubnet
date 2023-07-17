@@ -4,3 +4,4 @@ accelerate
 torchvision
 pydantic
 IPython
+scikit-learn
