@@ -31,8 +31,10 @@ import typing
 import pydantic
 import bittensor as bt
 import argparse
+from time import sleep
 
 bt.debug()
+bt.trace()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', type=str, default='cuda')
@@ -58,6 +60,8 @@ if model_path.endswith('.safetensors') or model_path.endswith('.ckpt') or model_
 else:
     # Load from huggingface model hub.
     model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16 ).to( config.device )
+
+bt.logging.trace
 
 img2img = StableDiffusionImg2ImgPipeline(**model.components)
 
@@ -118,5 +122,14 @@ def p( synapse: ImageToImage ) -> float:
 def v( synapse: ImageToImage ) -> None:
     pass
 
+
 axon = bt.axon().attach( f, b, p, v ).start()
 
+# keep process alive
+bt.logging.trace('Miner running. ^C to exit.')
+
+while True:
+    try:
+        sleep(1)
+    except KeyboardInterrupt:
+        break
