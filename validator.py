@@ -130,6 +130,7 @@ while True:
     # Optionally set weights
     current_block = sub.block
     if current_block % 100 == 0:
+        bt.logging.trace(f"Setting weights")
         uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
             uids = meta.uids,
             weights = weights,
