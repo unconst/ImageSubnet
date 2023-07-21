@@ -13,7 +13,7 @@ class AsyncDendritePool:
             self,
             uids: List[int],
             query: TextToImage,
-            timeout: float = 60
+            timeout: float = 12.0
     ):
 
         def call_single_uid(uid):

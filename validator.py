@@ -28,6 +28,7 @@ from protocol import TextToImage
 parser = argparse.ArgumentParser()
 parser.add_argument( '--netuid', type = int, default = 64 )
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
+parser.add_argument('--subtensor._mock', type=bool, default=False)
 bt.wallet.add_args( parser )
 bt.subtensor.add_args( parser )
 config = bt.config( parser )
@@ -131,11 +132,27 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
 
 async def main():
     global weights
+    # every 10 blocks, sync the metagraph.
+    if sub.block % 10 == 0:
+        meta.sync(subtensor = sub, )
+
     uids = meta.uids.tolist() 
+
+    # if uids is longer than weight matrix, then we need to add more weights.
+    if len(uids) > len(weights):
+        bt.logging.trace("Adding more weights")
+        size_difference = len(uids) - len(weights)
+        new_weights = torch.zeros( size_difference, dtype = torch.float32 )
+        # the new weights should be 0.8 * the average of all non 0 weights
+        new_weights = new_weights + 0.8 * torch.mean( weights[weights != 0] )
+        weights = torch.cat( (weights, new_weights) )
+        del new_weights
+
+    print('uids')
+    print(uids)
+
     # Select up to dendrites_per_query random dendrites.
     dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(uids) ) )
-    # just query dendrite 1
-    # dendrites_to_query = [uids[0]]
 
     # Generate a random synthetic prompt.
     prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']
@@ -151,13 +168,17 @@ async def main():
 
     bt.logging.trace("Calling dendrite pool")
     bt.logging.trace(f"Query: {query.text}")
+    bt.logging.trace("Dendrites:")
+    bt.logging.trace(dendrites_to_query)
 
     # Get response from endpoint.
     responses = await dendrite_pool.async_forward(
         uids = dendrites_to_query,
         query = query,
-        timeout = 12
+        timeout = 30
     )
+    bt.logging.trace("responses:")
+    bt.logging.trace(responses)
 
     rewards: torch.FloatTensor = calculate_rewards_for_prompt_alignment( query, responses )
     bt.logging.trace("Rewards:")

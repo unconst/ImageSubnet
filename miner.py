@@ -61,7 +61,7 @@ bt.logging.trace("Loading model: {}".format(config.miner.model))
 
 model_path = config.miner.model
 # Lets instantiate the stable diffusion model.
-if model_path.endswith('.safetensors') or model_path.endswith('.ckpt') or model_path.startswith('http'):
+if model_path.endswith('.safetensors') or model_path.endswith('.ckpt'):
     # Load from local file or from url.
     model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16 ).to( config.device )
 else:
