@@ -5,3 +5,4 @@ torchvision
 pydantic
 IPython
 scikit-learn
+fabric @ git+https://github.com/sd-fabric/fabric.git

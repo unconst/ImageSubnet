@@ -10,6 +10,11 @@ import bittensor as bt
 import numpy as np
 
 import torchvision.transforms as transforms
+from dendrite import AsyncDendritePool
+from typing import List
+
+import asyncio
+from time import sleep
 
 bt.trace()
 
@@ -21,7 +26,8 @@ from protocol import TextToImage
 
 # Load the config.
 parser = argparse.ArgumentParser()
-parser.add_argument( '--netuid', type = int )
+parser.add_argument( '--netuid', type = int, default = 64 )
+parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 bt.wallet.add_args( parser )
 bt.subtensor.add_args( parser )
 config = bt.config( parser )
@@ -31,7 +37,6 @@ wallet = bt.wallet( config = config )
 sub = bt.subtensor( config = config )
 meta = sub.metagraph( config.netuid )
 dend = bt.dendrite( wallet = wallet )
-print(meta.uids)
 
 # For cosine similarity.
 from sklearn.metrics.pairwise import cosine_similarity
@@ -50,11 +55,15 @@ image_processor = ViTImageProcessor.from_pretrained("nlpconnect/vit-gpt2-image-c
 
 # Load prompt dataset.
 from datasets import load_dataset
-dataset = iter(load_dataset("poloclub/diffusiondb")['train'].to_iterable_dataset())
+dataset = iter(load_dataset("poloclub/diffusiondb")['train'].shuffle().to_iterable_dataset())
 
 # For prompt generation
 from transformers import pipeline
 prompt_generation_pipe = pipeline("text-generation", model="succinctly/text2image-prompt-generator")
+
+# Form the dendrite pool.
+dendrite_pool = AsyncDendritePool( wallet = wallet, metagraph = meta )
+
 
 # Init the validator weights.
 alpha = 0.01
@@ -62,70 +71,100 @@ weights = torch.rand_like( meta.uids, dtype = torch.float32 )
 
  # Amount of images
 num_images = 1
+dendrites_per_query = 25
 
-while True:
+# Determine the rewards based on how close an image aligns to its prompt.
+def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ TextToImage ]) -> torch.FloatTensor:
 
+    # Takes the original query and a list of responses, returns a tensor of rewards equal to the length of the responses.
+    init_scores = torch.zeros( len(responses), dtype = torch.float32 )
+
+    for i, response in enumerate(responses):
+
+        # if theres no images, skip this response.
+        if len(response.images) == 0:
+            continue
+
+        # Lets get the cosine similarity between the ask and the response.
+        prompt_inputs = text_to_embedding_tokenizer( query.text, return_tensors="pt" )
+        prompt_embedding = text_to_embedding_model(**prompt_inputs)
+        prompt_embedding_numpy = prompt_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
+
+        img_scores = torch.zeros( num_images, dtype = torch.float32 )
+
+        bt.logging.trace(f"Processing response {i} of {len(responses)}")
+
+        for j, tensor_image in enumerate(response.images):
+            # Lets get the image.
+            image = transforms.ToPILImage()( bt.Tensor.deserialize(tensor_image) )
+            # Lets get the image caption.
+            pixel_values = image_processor(image, return_tensors='pt').pixel_values
+            generated_ids = image_to_text_model.generate(pixel_values)
+            generated_text = image_to_text_tokenizer.batch_decode( generated_ids, skip_special_tokens=True )[0]
+
+            # Lets get the cosine similarity between the ask and the response.
+            generate_text_inputs = text_to_embedding_tokenizer( generated_text, return_tensors="pt" )
+            generated_embedding = text_to_embedding_model(**generate_text_inputs)
+            generated_embedding_numpy = generated_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
+
+            # Get cosine similarity
+            img_scores[j] = torch.tensor(cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy ))
+
+        print(img_scores, i, "img_scores")
+        
+        # Get the average weight for the uid from _weights.
+        init_scores[i] = torch.mean( img_scores )
+
+    print(init_scores)
+
+    # if sum is 0 then return empty vector
+    if torch.sum( init_scores ) == 0:
+        return init_scores
+
+    # normalize the scores such that they sum to 1.
+    init_scores = init_scores / torch.sum( init_scores )
+
+    return init_scores
+
+async def main():
+    global weights
     uids = meta.uids.tolist() 
-    # Get next uid to query.
-    uid_to_query = random.choice( uids )
-
-    # Get UID endpoint information.
-    axon_to_query = meta.axons[ uid_to_query ]
+    # Select up to dendrites_per_query random dendrites.
+    dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(uids) ) )
 
     # Generate a random synthetic prompt.
     prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']
 
+    # Create the query.
+    query = TextToImage(
+        text = prompt,
+        num_images_per_prompt = num_images,
+        height = 512,
+        width = 512,
+        negative_prompt = "",
+    )
+
+    bt.logging.trace("Calling dendrite pool")
+    bt.logging.trace(f"Query: {query.text}")
 
     # Get response from endpoint.
-    response = dend.query( axon_to_query, TextToImage( text = prompt, num_images_per_prompt = num_images, negative_prompt="" ) )
+    responses = await dendrite_pool.async_forward(
+        uids = dendrites_to_query,
+        query = query,
+        timeout = 12
+    )
 
-    if(response == None):
-        bt.logging.trace(f"Got no response from {uid_to_query}")
-        continue
+    rewards: torch.FloatTensor = calculate_rewards_for_prompt_alignment( query, responses )
+    bt.logging.trace("Rewards:")
+    bt.logging.trace(rewards)
+    # loop rewards and set weights.
+    for i, uid in enumerate(dendrites_to_query):
+        weights[uid] = weights[uid] + alpha * (rewards[i] or 0)
 
-    if(response.images == None or len(response.images) == 0):
-        bt.logging.trace(f"Got no images from {uid_to_query}")
-        continue
-
-    # slice the images requested from the response
-    images = response.images[:num_images]
-    _weights = []
-    n = 0
-
-    for tensor_image in images:
-        # Lets get the image.
-        image = transforms.ToPILImage()( bt.Tensor.deserialize(tensor_image) )
-        # Lets get the image caption.
-        pixel_values = image_processor(image, return_tensors='pt').pixel_values
-        generated_ids = image_to_text_model.generate(pixel_values)
-        generated_text = image_to_text_tokenizer.batch_decode( generated_ids, skip_special_tokens=True )[0]
-
-        bt.logging.trace(f"\nReal prompt: {prompt} \ngenerated prompt: {generated_text}")
-
-        # Lets get the cosine similarity between the ask and the response.
-        generate_text_inputs = text_to_embedding_tokenizer( generated_text, return_tensors="pt" )
-        generated_embedding = text_to_embedding_model(**generate_text_inputs)
-        generated_embedding_numpy = generated_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
-
-        # Lets get the cosine similarity between the ask and the response.
-        prompt_inputs = text_to_embedding_tokenizer( prompt, return_tensors="pt" )
-        prompt_embedding = text_to_embedding_model(**prompt_inputs)
-        prompt_embedding_numpy = prompt_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
-
-        # Get cosine similarity
-        weight_for_image = cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy )
-        bt.logging.trace(f"Got weight {weight_for_image} for {uid_to_query} and image {n}")
-        _weights.append( weight_for_image )
-        n += 1
-    
-    # Get the average weight for the uid from _weights.
-    next_weight_for_uid = np.mean( _weights )
-    bt.logging.trace(f"Got average weight {next_weight_for_uid} for {uid_to_query}")
-
-    # Adjust the moving average
-    # weights[uid_to_query] = (1 - alpha) * _weights[uid_to_query] + alpha * next_weight_for_uid
-    # use np.concatenate to add the new weight to the weights tensor
-    weights[uid_to_query] = (1 - alpha) * weights[uid_to_query] + (alpha * next_weight_for_uid)
+    # Normalize weights.
+    weights = weights / torch.sum( weights )
+    bt.logging.trace("Weights:")
+    bt.logging.trace(weights)
 
     # Optionally set weights
     current_block = sub.block
@@ -143,3 +182,8 @@ while True:
             weights = processed_weights,
             uids = uids,
         )
+
+
+while True:
+     # wait for main to finish
+    asyncio.run( main() )
