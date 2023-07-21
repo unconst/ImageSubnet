@@ -83,6 +83,7 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
 
         # if theres no images, skip this response.
         if len(response.images) == 0:
+            print("No images in response", i, "skipping")
             continue
 
         # Lets get the cosine similarity between the ask and the response.
@@ -106,9 +107,11 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
             generate_text_inputs = text_to_embedding_tokenizer( generated_text, return_tensors="pt" )
             generated_embedding = text_to_embedding_model(**generate_text_inputs)
             generated_embedding_numpy = generated_embedding.last_hidden_state[-1][-1].reshape( (1,-1) ).detach().numpy()
-
+            
             # Get cosine similarity
-            img_scores[j] = torch.tensor(cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy ))
+            cosinesim = torch.tensor(cosine_similarity( generated_embedding_numpy, prompt_embedding_numpy ))
+
+            img_scores[j] = cosinesim
 
         print(img_scores, i, "img_scores")
         
@@ -131,6 +134,8 @@ async def main():
     uids = meta.uids.tolist() 
     # Select up to dendrites_per_query random dendrites.
     dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(uids) ) )
+    # just query dendrite 1
+    # dendrites_to_query = [uids[0]]
 
     # Generate a random synthetic prompt.
     prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']

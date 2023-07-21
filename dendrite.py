@@ -17,9 +17,10 @@ class AsyncDendritePool:
     ):
 
         def call_single_uid(uid):
+            query_copy = query.copy()
             return self.dendrite(
                 self.metagraph.axons[uid],
-                query,
+                synapse=query_copy,
                 timeout=timeout
             )
 
