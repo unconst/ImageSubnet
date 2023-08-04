@@ -18,5 +18,6 @@ class TextToImage( bt.Synapse ):
 
 class ImageToImage( TextToImage ):
     image: bt.Tensor = pydantic.Field( ... , allow_mutation = False)
+    strength: float = pydantic.Field( 1.0 , allow_mutation = False)
 
 T = TypeVar('T', bound=Union[TextToImage, ImageToImage])
