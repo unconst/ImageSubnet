@@ -15,9 +15,10 @@ class TextToImage( bt.Synapse ):
     guidance_scale: float = 7.5
     negative_prompt: str = pydantic.Field( ... , allow_mutation = False)
     seed: int = pydantic.Field( -1 , allow_mutation = False)
+    nsfw_allowed: bool = pydantic.Field( False , allow_mutation = False)
 
 class ImageToImage( TextToImage ):
     image: bt.Tensor = pydantic.Field( ... , allow_mutation = False)
-    strength: float = pydantic.Field( 1.0 , allow_mutation = False)
+    strength: float = pydantic.Field( 0.75 , allow_mutation = False)
 
 T = TypeVar('T', bound=Union[TextToImage, ImageToImage])

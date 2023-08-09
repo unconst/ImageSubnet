@@ -29,9 +29,23 @@ parser = argparse.ArgumentParser()
 parser.add_argument( '--netuid', type = int, default = 64 )
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 parser.add_argument('--subtensor._mock', type=bool, default=False)
+parser.add_argument('--validator.allow_nsfw', type=bool, default=False)
+parser.add_argument('--validator.save_dir', type=str, default='./images')
+parser.add_argument('--validator.save_images', type=bool, default=False)
+parser.add_argument('--validator.use_absolute_size', type=bool, default=False) # Set to True if you want to 100% match the input size, else just match the aspect ratio
+parser.add_argument('--device', type=str, default='cuda')
 bt.wallet.add_args( parser )
 bt.subtensor.add_args( parser )
 config = bt.config( parser )
+
+# if save dir different than default, save_images should be true
+if config.validator.save_dir != './images':
+    config.validator.save_images = True
+
+# if save dir doesnt exist, create it
+if not os.path.exists(config.validator.save_dir) and config.validator.save_images:
+    bt.logging.trace("Save directory doesnt exist, creating it")
+    os.makedirs(config.validator.save_dir)
 
 # Instantiate the bittensor objects.
 wallet = bt.wallet( config = config )
@@ -43,7 +57,15 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+from utils import StableDiffusionSafetyChecker
+from transformers import CLIPImageProcessor
+from fabric.utils import get_free_gpu, tile_images
+import matplotlib.font_manager as fm
+
+def get_system_fonts():
+    font_list = fm.findSystemFonts(fontpaths=None, fontext='ttf')
+    return font_list
 
 def load_and_preprocess_image_array(image_array, target_size):
     image_transform = transforms.Compose([
@@ -124,6 +146,10 @@ def calculate_mean_dissimilarity(dissimilarity_matrix):
 
      # Min-max normalization
     non_zero_values = [value for value in mean_dissimilarities if value != 0]
+
+    if(len(non_zero_values) == 0):
+        return [0.5] * num_images
+
     min_value = min(non_zero_values)
     max_value = max(mean_dissimilarities)
     range_value = max_value - min_value
@@ -240,6 +266,31 @@ def calculate_dissimilarity_rewards( images: List[ Image.Image ] ) -> torch.Floa
 
     return init_scores
 
+def add_black_border(image, border_size):
+    # Create a new image with the desired dimensions
+    new_width = image.width
+    new_height = image.height + border_size
+    new_image = Image.new("RGB", (new_width, new_height), color="black")
+    
+    # Paste the original image onto the new image, leaving space at the top for the border
+    new_image.paste(image, (0, border_size))
+    
+    return new_image
+
+
+safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( config.device )
+processor = CLIPImageProcessor()
+
+# find DejaVu Sans font
+fonts = get_system_fonts()
+dejavu_font = None
+for font in fonts:
+    if "DejaVu" in font:
+        dejavu_font = font
+        break 
+
+default_font = ImageFont.truetype(dejavu_font, 30)
+
 async def main():
     global weights
     # every 10 blocks, sync the metagraph.
@@ -265,8 +316,19 @@ async def main():
     dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(uids) ) )
     # dendrites_to_query = uids
 
-    # Generate a random synthetic prompt.
-    prompt = prompt_generation_pipe( next(dataset)['prompt'] )[0]['generated_text']
+    # Generate a random synthetic prompt. cut to first 20 characters.
+    initial_prompt = next(dataset)['prompt']
+    # split on spaces
+    initial_prompt = initial_prompt.split(' ')
+    # pick a random number of words to keep
+    keep = random.randint(1, len(initial_prompt))
+    # max of 6 words
+    keep = min(keep, 6)
+    # keep the first keep words
+    initial_prompt = ' '.join(initial_prompt[:keep])
+    prompt = prompt_generation_pipe( initial_prompt, min_length=30 )[0]['generated_text']
+
+    bt.logging.trace(f"Inital prompt: {initial_prompt}\nPrompt: {prompt}\n")
 
     # Create the query.
     query = TextToImage(
@@ -276,6 +338,8 @@ async def main():
         width = 512,
         negative_prompt = "",
         num_inference_steps = 50,
+        guidance_scale=random.uniform(7.5, 10.5),
+        nsfw_allowed=config.validator.allow_nsfw,
     )
 
     bt.logging.trace("Calling dendrite pool")
@@ -290,13 +354,22 @@ async def main():
         timeout = 30
     )
 
-    # save all images in responses to a folder
-    # imgid = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    # for i, response in enumerate(responses):
-    #     for j, image in enumerate(response.images):
-    #         # Lets get the image.
-    #         image = transforms.ToPILImage()( bt.Tensor.deserialize(image) )
-    #         image.save(f"images/{imgid}_{i}_{j}.png")
+    if not config.validator.allow_nsfw:
+        for i, response in enumerate(responses):
+            if len(response.images) == 0:
+                continue
+            clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( config.device )
+            images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( config.device ))
+
+            any_nsfw = any(has_nsfw_concept)
+            if any_nsfw:
+                bt.logging.trace(f"Detected NSFW image(s) from dendrite {dendrites_to_query[i]}")
+
+            # remove all nsfw images from the response
+            for j, has_nsfw in enumerate(has_nsfw_concept):
+                if has_nsfw:
+                    del responses[i].images[j]
+
 
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
     dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( best_images )
@@ -314,6 +387,60 @@ async def main():
     rewards = _rewards
     
     weights = weights + alpha * rewards
+
+    # loop through all images and remove black images
+    all_images_and_scores = []
+    for i, response in enumerate(responses):
+        images = response.images
+        for j, image in enumerate(images):
+            img = bt.Tensor.deserialize(image)
+            if img.sum() == 0:
+                bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
+                del responses[i].images[j]
+            else:
+                # add the uid to the image in the top left with PIL
+                pil_img =  transforms.ToPILImage()( img )
+
+                # get size of image, if it doesnt match the size of the request, check to see if it matches the aspect ratio, if not delete it from responses
+                if pil_img.width != query.width or pil_img.height != query.height:
+                    if config.validator.use_absolute_size:
+                        bt.logging.trace(f"Detected image with incorrect size from dendrite {dendrites_to_query[i]}")
+                        del responses[i].images[j]
+                        continue
+                    if pil_img.width / pil_img.height != query.width / query.height:
+                        bt.logging.trace(f"Detected image with incorrect aspect ratio from dendrite {dendrites_to_query[i]}")
+                        del responses[i].images[j]
+                        continue
+
+                draw = ImageDraw.Draw(pil_img)
+                width = pil_img.width
+                
+                draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=default_font)
+                # draw score in top right
+                draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=default_font)
+                # downsize image in half
+                # pil_img = pil_img.resize( (int(pil_img.width / 2), int(pil_img.height / 2)) )
+                all_images_and_scores.append( (pil_img, rewards[i].item()) )
+
+    # if save images is true, save the images to a folder
+    if config.validator.save_images == True:
+        # sort by score
+        all_images_and_scores.sort(key=lambda x: x[1], reverse=True)
+        # get the images
+        all_images = [x[0] for x in all_images_and_scores]
+        tiled_images = tile_images( all_images )
+        # extend the image by 90 px on the top
+        tiled_images = add_black_border( tiled_images, 90 )
+        draw = ImageDraw.Draw(tiled_images)
+        
+        # add text in the top
+        draw.text((10, 10), prompt.encode("utf-8", "ignore").decode("utf-8"), (255, 255, 255), font=default_font)
+
+        # save the image
+        tiled_images.save( f"images/{sub.block}.png", "PNG" )
+        # save a text file with the prompt
+        with open(f"images/{sub.block}.txt", "w") as f:
+            f.write(prompt)
 
 
     # Normalize weights.

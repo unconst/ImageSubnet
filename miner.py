@@ -40,6 +40,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--device', type=str, default='cuda')
 parser.add_argument('--miner.model', type=str, default='prompthero/openjourney-v4')
 parser.add_argument('--miner.max_batch_size', type=int, default=4)
+parser.add_argument('--miner.allow_nsfw', type=bool, default=False)
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 parser.add_argument('--wallet.hotkey', type=str, default='default')
 parser.add_argument('--wallet.name', type=str, default='default')
@@ -50,6 +51,14 @@ parser.add_argument('--axon.port', type=int, default=3000)
 config = bt.config( parser )
 subtensor = bt.subtensor( 64, config=config, chain_endpoint=config.subtensor.chain_endpoint )
 
+
+from utils import StableDiffusionSafetyChecker, CLIPImageProcessor
+bt.logging.trace("Loading safety checker")
+safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( config.device )
+processor = CLIPImageProcessor()
+
+if config.miner.allow_nsfw:
+    bt.logging.warning("NSFW is enabled. Without a filter, your miner may generate unwanted images. Please use with caution.")
 
 # Stable diffusion
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
@@ -63,10 +72,10 @@ model_path = config.miner.model
 # Lets instantiate the stable diffusion model.
 if model_path.endswith('.safetensors') or model_path.endswith('.ckpt'):
     # Load from local file or from url.
-    model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16 ).to( config.device )
+    model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
 else:
     # Load from huggingface model hub.
-    model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16 ).to( config.device )
+    model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
 
 bt.logging.trace
 
@@ -91,6 +100,43 @@ async def f( synapse: TextToImage ) -> TextToImage:
     if synapse.num_images_per_prompt > config.miner.max_batch_size:
         raise ValueError(f"num_images_per_prompt ({synapse.num_images_per_prompt}) must be less than or equal to max_batch_size ({config.miner.max_batch_size})")
 
+    output = GenerateImage(synapse, generator)
+
+    synapse.images = []
+
+    has_nsfw_concept = CheckNSFW(output, synapse)
+    if any(has_nsfw_concept):
+        output.images = [image for image, has_nsfw in zip(output.images, has_nsfw_concept) if not has_nsfw]
+        # try to regenerate another image once
+        copy_synapse = synapse.copy()
+        copy_synapse.num_images_per_prompt = 1
+        output2 = GenerateImage(copy_synapse, generator)
+        has_nsfw_concept = CheckNSFW(output2, synapse)
+        if any(has_nsfw_concept):
+            output2.images = [image for image, has_nsfw in zip(output2.images, has_nsfw_concept) if not has_nsfw]
+            output.images += output2.images
+        if len(output.images) == 0:
+            # if we still have no images, just return the original output
+            bt.logging.warning("All images were NSFW, returning empty list")
+            output.images = []
+
+
+
+    for image in output.images:
+        img_tensor = transform(image)
+        synapse.images.append( bt.Tensor.serialize( img_tensor ) )
+
+    return synapse
+
+def CheckNSFW(output, synapse):
+    if not config.miner.allow_nsfw or not synapse.allow_nsfw:
+        clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( config.device )
+        images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( config.device ))
+        return has_nsfw_concept
+    else:
+        return [False] * len(output.images)
+
+def GenerateImage(synapse, generator):
     try:
         # If we are doing image to image, we need to use a different pipeline.
         output = img2img(
@@ -112,13 +158,8 @@ async def f( synapse: TextToImage ) -> TextToImage:
             negative_prompt = synapse.negative_prompt,
             generator = generator
         )
-
-    synapse.images = []
-    for image in output.images:
-        img_tensor = transform(image)
-        synapse.images.append( bt.Tensor.serialize( img_tensor ) )
-
-    return synapse
+        
+    return output
 
 def b( synapse: TextToImage ) -> bool:
     return False
