@@ -12,7 +12,7 @@ The Validator is built such that it ranks miners images on aesthetic and how clo
 Both Validators and Miners will need to register to subnet **41** in order to participate in the ImageSubnet. You can do so by recycle registering like so `btcli recycle_register --netuid 41`
 
 
-For **Miners**, the command you will run is `py miner.py --miner.model [huggingface/repo OR path_to/model.safetensors]`
+##### For **miners** the command you will run is `py miner.py --miner.model [huggingface/repo OR path_to/model.safetensors]`
 
 Optional arguments include
 
@@ -37,7 +37,7 @@ Optional arguments include
 `--axon.port` default: **3000**, port to launch your axon in, this needs to be open to the public
 
 
-For **Validators**, the command you will run is `py validator.py`
+##### For **validators**, the command you will run is `py validator.py`
 
 
 Optional arguments include
