@@ -27,8 +27,6 @@ if sys.version_info < required_version:
 
 # Imports
 import torch
-import typing
-import pydantic
 import bittensor as bt
 import argparse
 from time import sleep
@@ -38,9 +36,11 @@ bt.trace()
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', type=str, default='cuda')
-parser.add_argument('--miner.model', type=str, default='prompthero/openjourney-v4')
-parser.add_argument('--miner.max_batch_size', type=int, default=1)
 parser.add_argument('--miner.allow_nsfw', type=bool, default=False)
+parser.add_argument('--miner.max_batch_size', type=int, default=1)
+parser.add_argument('--miner.model', type=str, default='stabilityai/stable-diffusion-xl-base-1.0')
+parser.add_argument('--miner.model_type', type=str, default='XL') # XL, 1.5, 2.0
+parser.add_argument('--miner.vae', type=str, default=None)
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 parser.add_argument('--wallet.hotkey', type=str, default='default')
 parser.add_argument('--wallet.name', type=str, default='default')
@@ -50,6 +50,10 @@ parser.add_argument('--axon.port', type=int, default=3000)
 
 config = bt.config( parser )
 subtensor = bt.subtensor( 64, config=config, chain_endpoint=config.subtensor.chain_endpoint )
+
+# if model_type is not ['XL', '1.5', or '2.0'], then we will error and provide the values that are allowed
+if config.miner.model_type not in ['XL', '1.5', '2.0']:
+    raise argparse.ArgumentTypeError(f"model_type must be XL, 1.5, or 2.0, but got {config.miner.model_type}")
 
 
 from utils import StableDiffusionSafetyChecker, CLIPImageProcessor
@@ -61,7 +65,7 @@ if config.miner.allow_nsfw:
     bt.logging.warning("NSFW is enabled. Without a filter, your miner may generate unwanted images. Please use with caution.")
 
 # Stable diffusion
-from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
+from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline, StableDiffusionXLPipeline, StableDiffusionXLPipeline, AutoencoderKL
 
 import torchvision.transforms as transforms
 from protocol import TextToImage
@@ -72,14 +76,23 @@ model_path = config.miner.model
 # Lets instantiate the stable diffusion model.
 if model_path.endswith('.safetensors') or model_path.endswith('.ckpt'):
     # Load from local file or from url.
-    model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
+    if config.miner.model_type == 'XL':
+        model = StableDiffusionXLPipeline.from_single_file( model_path ).to( config.device )
+    else:
+        model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
 else:
     # Load from huggingface model hub.
     model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
 
+if config.miner.vae is not None:
+    model.vae = AutoencoderKL.from_single_file( config.miner.vae ).to( config.device )
+
 bt.logging.trace
 
-img2img = StableDiffusionImg2ImgPipeline(**model.components)
+if config.miner.model_type == 'XL':
+    img2img = StableDiffusionXLPipeline(**model.components)
+else:
+    img2img = StableDiffusionImg2ImgPipeline(**model.components)
 
 
 transform = transforms.Compose([
@@ -104,7 +117,7 @@ async def f( synapse: TextToImage ) -> TextToImage:
 
     synapse.images = []
 
-    has_nsfw_concept = CheckNSFW(output, synapse)
+    has_nsfw_concept = CheckNSFW(output, synapse) # will return all False if allow_nsfw is enabled
     if any(has_nsfw_concept):
         output.images = [image for image, has_nsfw in zip(output.images, has_nsfw_concept) if not has_nsfw]
         # try to regenerate another image once
