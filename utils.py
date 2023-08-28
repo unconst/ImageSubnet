@@ -2,6 +2,11 @@ from transformers import CLIPConfig, CLIPVisionModel, PreTrainedModel
 import torch
 import torch.nn as nn
 import numpy as np
+import torchvision.transforms as transforms
+
+transform = transforms.Compose([
+    transforms.PILToTensor()
+])
 
 def cosine_distance(image_embeds, text_embeds):
     normalized_image_embeds = nn.functional.normalize(image_embeds)
@@ -70,7 +75,11 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
                 if torch.is_tensor(images) or torch.is_tensor(images[0]):
                     images[idx] = torch.zeros_like(images[idx])  # black image
                 else:
-                    images[idx] = np.zeros(images[idx].shape)  # black image
+                    # images[idx] is a PIL image, so we can't use .shape, convert using transform
+                    try:
+                        images[idx] = np.zeros(transform(images[idx]).shape)  # black image
+                    except:
+                        images[idx] = np.zeros((512, 512, 3))
 
         if any(has_nsfw_concepts):
             print(
