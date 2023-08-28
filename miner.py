@@ -255,8 +255,11 @@ def GenerateImage(synapse, generator):
             negative_prompt = synapse.negative_prompt,
             generator = generator
         )
+
+    _output = synapse.copy()
+    _output.images = output.images
         
-    return output
+    return _output
 
 def b( synapse: TextToImage ) -> bool:
     return False
