@@ -226,6 +226,7 @@ def GenerateImage(synapse, generator):
                 
     num_images_per_prompt = synapse.num_images_per_prompt
     if config.miner.max_images is not None and num_images_per_prompt > config.miner.max_images:
+        print(f"num_images_per_prompt ({num_images_per_prompt}) must be less than or equal to max_images ({config.miner.max_images}), reducing num_images_per_prompt")
         num_images_per_prompt = config.miner.max_images
 
     # determine total pixels to generate
