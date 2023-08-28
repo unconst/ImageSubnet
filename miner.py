@@ -202,6 +202,28 @@ def GenerateImage(synapse, generator):
     elif config.miner.width.max is not None and width > config.miner.width.max:
         raise ValueError(f"width ({width}) must be less than or equal to width.max ({config.miner.width.max})")
     
+    # if height and widht are different from synapse, ensure that the aspect ratio is the same to the nearest divisible by 8
+    if height != synapse.height or width != synapse.width:
+        # determine the aspect ratio of the synapse
+        aspect_ratio = synapse.width / synapse.height
+        # determine the aspect ratio of the new height and width
+        new_aspect_ratio = width / height
+        # if the aspect ratio is different, we need to adjust the height or width to match the aspect ratio of the synapse
+        if aspect_ratio != new_aspect_ratio:
+            # if the new aspect ratio is greater than the synapse aspect ratio, we need to reduce the width
+            if new_aspect_ratio > aspect_ratio:
+                # reduce the width to the nearest divisible by 8
+                width = int(width - (width % 8))
+                # calculate the new height
+                height = int(width / aspect_ratio)
+            # if the new aspect ratio is less than the synapse aspect ratio, we need to reduce the height
+            else:
+                # reduce the height to the nearest divisible by 8
+                height = int(height - (height % 8))
+                # calculate the new width
+                width = int(height * aspect_ratio)
+
+                
     num_images_per_prompt = synapse.num_images_per_prompt
     if config.miner.max_images is not None and num_images_per_prompt > config.miner.max_images:
         num_images_per_prompt = config.miner.max_images
