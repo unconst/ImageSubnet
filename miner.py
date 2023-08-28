@@ -143,9 +143,7 @@ async def f( synapse: TextToImage ) -> TextToImage:
     if any(has_nsfw_concept):
         output.images = [image for image, has_nsfw in zip(output.images, has_nsfw_concept) if not has_nsfw]
         # try to regenerate another image once
-        copy_synapse = synapse.copy()
-        copy_synapse.num_images_per_prompt = 1
-        output2 = GenerateImage(copy_synapse, generator)
+        output2 = GenerateImage(synapse, generator)
         has_nsfw_concept = CheckNSFW(output2, synapse)
         if any(has_nsfw_concept):
             output2.images = [image for image, has_nsfw in zip(output2.images, has_nsfw_concept) if not has_nsfw]
@@ -256,11 +254,8 @@ def GenerateImage(synapse, generator):
             negative_prompt = synapse.negative_prompt,
             generator = generator
         )
-
-    _output = synapse.copy()
-    _output.images = output.images
         
-    return _output
+    return output
 
 def b( synapse: TextToImage ) -> bool:
     return False
