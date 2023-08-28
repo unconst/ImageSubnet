@@ -56,7 +56,9 @@ if config.miner.model_type not in ['XL', '1.5', '2.0']:
     raise argparse.ArgumentTypeError(f"model_type must be XL, 1.5, or 2.0, but got {config.miner.model_type}")
 
 
-from utils import StableDiffusionSafetyChecker, CLIPImageProcessor
+from utils import StableDiffusionSafetyChecker
+from transformers import CLIPImageProcessor
+
 bt.logging.trace("Loading safety checker")
 safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( config.device )
 processor = CLIPImageProcessor()
