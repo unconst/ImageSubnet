@@ -41,6 +41,16 @@ parser.add_argument('--miner.max_batch_size', type=int, default=1)
 parser.add_argument('--miner.model', type=str, default='stabilityai/stable-diffusion-xl-base-1.0')
 parser.add_argument('--miner.model_type', type=str, default='XL') # XL, 1.5, 2.0
 parser.add_argument('--miner.vae', type=str, default=None)
+parser.add_argument('--miner.steps.max', type=int, default=50)
+parser.add_argument('--miner.steps.min', type=int, default=10)
+parser.add_argument('--miner.guidance.max', type=float, default=None)
+parser.add_argument('--miner.guidance.min', type=float, default=0)
+parser.add_argument('--miner.height.max', type=int, default=2048)
+parser.add_argument('--miner.height.min', type=int, default=None)
+parser.add_argument('--miner.width.max', type=int, default=2048)
+parser.add_argument('--miner.width.min', type=int, default=None)
+parser.add_argument('--miner.max_images', type=int, default=4)
+parser.add_argument('--miner.max_pixels', type=int, default=(1024 * 1024 * 4)) # determines total number of images able to generate in one batch (height * width * num_images_per_prompt)
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 parser.add_argument('--wallet.hotkey', type=str, default='default')
 parser.add_argument('--wallet.name', type=str, default='default')
@@ -54,6 +64,16 @@ subtensor = bt.subtensor( 64, config=config, chain_endpoint=config.subtensor.cha
 # if model_type is not ['XL', '1.5', or '2.0'], then we will error and provide the values that are allowed
 if config.miner.model_type not in ['XL', '1.5', '2.0']:
     raise argparse.ArgumentTypeError(f"model_type must be XL, 1.5, or 2.0, but got {config.miner.model_type}")
+
+# verify min/max height and width as they should all be divisible by 8
+if config.miner.height.max is not None and config.miner.height.max % 8 != 0:
+    raise argparse.ArgumentTypeError(f"height.max must be divisible by 8, but got {config.miner.height.max}")
+if config.miner.height.min is not None and config.miner.height.min % 8 != 0:
+    raise argparse.ArgumentTypeError(f"height.min must be divisible by 8, but got {config.miner.height.min}")
+if config.miner.width.max is not None and config.miner.width.max % 8 != 0:
+    raise argparse.ArgumentTypeError(f"width.max must be divisible by 8, but got {config.miner.width.max}")
+if config.miner.width.min is not None and config.miner.width.min % 8 != 0:
+    raise argparse.ArgumentTypeError(f"width.min must be divisible by 8, but got {config.miner.width.min}")
 
 
 from utils import StableDiffusionSafetyChecker
@@ -152,24 +172,64 @@ def CheckNSFW(output, synapse):
         return [False] * len(output.images)
 
 def GenerateImage(synapse, generator):
+    inference_steps = synapse.num_inference_steps
+    if config.miner.steps.min is not None and inference_steps < config.miner.steps.min:
+        inference_steps = config.miner.steps.min
+    elif config.miner.steps.max is not None and inference_steps > config.miner.steps.max:
+        inference_steps = config.miner.steps.max
+
+    guidance_scale = synapse.guidance_scale
+    if config.miner.guidance.min is not None and guidance_scale < config.miner.guidance.min:
+        guidance_scale = config.miner.guidance.min
+    elif config.miner.guidance.max is not None and guidance_scale > config.miner.guidance.max:
+        guidance_scale = config.miner.guidance.max
+
+    height = synapse.height
+    if config.miner.height.min is not None and height < config.miner.height.min:
+        if synapse.fixed_resolution:
+            raise ValueError(f"height ({height}) must be greater than or equal to height.min ({config.miner.height.min})")
+        else:
+            height = config.miner.height.min
+    elif config.miner.height.max is not None and height > config.miner.height.max:
+        raise ValueError(f"height ({height}) must be less than or equal to height.max ({config.miner.height.max})")
+    
+    width = synapse.width
+    if config.miner.width.min is not None and width < config.miner.width.min:
+        if synapse.fixed_resolution:
+            raise ValueError(f"width ({width}) must be greater than or equal to width.min ({config.miner.width.min})")
+        else:
+            width = config.miner.width.min
+    elif config.miner.width.max is not None and width > config.miner.width.max:
+        raise ValueError(f"width ({width}) must be less than or equal to width.max ({config.miner.width.max})")
+    
+    num_images_per_prompt = synapse.num_images_per_prompt
+    if config.miner.max_images is not None and num_images_per_prompt > config.miner.max_images:
+        num_images_per_prompt = config.miner.max_images
+
+    # determine total pixels to generate
+    total_pixels = height * width * synapse.num_images_per_prompt
+    if config.miner.max_pixels is not None and total_pixels > config.miner.max_pixels:
+        raise ValueError(f"total pixels ({total_pixels}) must be less than or equal to max_pixels ({config.miner.max_pixels}), reduce image size, or num_images_per_prompt")
+    
     try:
         # If we are doing image to image, we need to use a different pipeline.
         output = img2img(
             image = synapse.image,
-            num_images_per_prompt = synapse.num_images_per_prompt,
-            num_inference_steps = synapse.num_inference_steps,
-            guidance_scale = synapse.guidance_scale,
+            num_images_per_prompt = num_images_per_prompt,
+            num_inference_steps = inference_steps,
+            guidance_scale = guidance_scale,
+            strength = synapse.strength,
             negative_prompt = synapse.negative_prompt,
             generator = generator
         )
     except:
         output = model(
             prompt = synapse.text,
-            height = synapse.height,
-            width = synapse.width,
-            num_images_per_prompt = synapse.num_images_per_prompt,
-            num_inference_steps = synapse.num_inference_steps,
-            guidance_scale = synapse.guidance_scale,
+            height = height,
+            width = width,
+            num_images_per_prompt = num_images_per_prompt,
+            num_inference_steps = inference_steps,
+            guidance_scale = guidance_scale,
             negative_prompt = synapse.negative_prompt,
             generator = generator
         )
