@@ -33,6 +33,7 @@ parser.add_argument('--validator.allow_nsfw', type=bool, default=False)
 parser.add_argument('--validator.save_dir', type=str, default='./images')
 parser.add_argument('--validator.save_images', type=bool, default=False)
 parser.add_argument('--validator.use_absolute_size', type=bool, default=False) # Set to True if you want to 100% match the input size, else just match the aspect ratio
+parser.add_argument('--validator.label_images', type=bool, default=False, help="if true, label images with dendrite uid and score")
 parser.add_argument('--device', type=str, default='cuda')
 bt.wallet.add_args( parser )
 bt.subtensor.add_args( parser )
@@ -282,14 +283,15 @@ safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-dif
 processor = CLIPImageProcessor()
 
 # find DejaVu Sans font
-fonts = get_system_fonts()
-dejavu_font = None
-for font in fonts:
-    if "DejaVu" in font:
-        dejavu_font = font
-        break 
+if (config.validator.label_images == True):
+    fonts = get_system_fonts()
+    dejavu_font = None
+    for font in fonts:
+        if "DejaVu" in font:
+            dejavu_font = font
+            break 
 
-default_font = ImageFont.truetype(dejavu_font, 30)
+    default_font = ImageFont.truetype(dejavu_font, 30)
 
 async def main():
     global weights
@@ -412,14 +414,15 @@ async def main():
                         del responses[i].images[j]
                         continue
 
-                draw = ImageDraw.Draw(pil_img)
-                width = pil_img.width
-                
-                draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=default_font)
-                # draw score in top right
-                draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=default_font)
-                # downsize image in half
-                # pil_img = pil_img.resize( (int(pil_img.width / 2), int(pil_img.height / 2)) )
+                if (config.validator.label_images == True):
+                    draw = ImageDraw.Draw(pil_img)
+                    width = pil_img.width
+                    
+                    draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=default_font)
+                    # draw score in top right
+                    draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=default_font)
+                    # downsize image in half
+                    # pil_img = pil_img.resize( (int(pil_img.width / 2), int(pil_img.height / 2)) )
                 all_images_and_scores.append( (pil_img, rewards[i].item()) )
 
     # if save images is true, save the images to a folder
