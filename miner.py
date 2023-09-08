@@ -255,7 +255,12 @@ def GenerateImage(synapse, generator):
             generator = generator
         )
         
-    return output
+    synapse.images = []
+    for image in output.images:
+        img_tensor = transform(image)
+        synapse.images.append( bt.Tensor.serialize( img_tensor ) )
+
+    return synapse
 
 def b( synapse: TextToImage ) -> bool:
     return False
