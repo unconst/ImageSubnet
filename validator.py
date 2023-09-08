@@ -107,6 +107,11 @@ def cosine_similarity(vector1, vector2):
 def compare_to_set(image_array, target_size=(224, 224)):
     # convert image array to index, image tuple pairs
     image_array = [(i, image) for i, image in enumerate(image_array)]
+
+    # if there are no images, return an empty matrix
+    if len(image_array) == 0:
+        return []
+
     # only process images that are not None
     style_vectors = extract_style_vectors([image for _, image in image_array if image is not None], target_size)
     # add back in the None images as zero vectors
@@ -204,7 +209,12 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
     init_scores = torch.zeros( len(responses), dtype = torch.float32 )
     top_images = []
 
+    print("Calculating rewards for prompt alignment")
+    print(f"Query: {query.text}")
+    print(f"Responses: {len(responses)}")
+
     for i, response in enumerate(responses):
+        print(response, type(response))
 
         # if theres no images, skip this response.
         if len(response.images) == 0:
@@ -237,7 +247,7 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
         
     # if sum is 0 then return empty vector
     if torch.sum( init_scores ) == 0:
-        return torch.zeros( len(responses), dtype = torch.float32 )
+        return (init_scores, top_images)
 
     # preform exp on all values
     init_scores = torch.exp( init_scores )
@@ -248,12 +258,15 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
     # normalize the scores such that they sum to 1 but skip scores that are 0
     init_scores = init_scores / torch.sum( init_scores )
 
-
     return (init_scores, top_images)
 
 def calculate_dissimilarity_rewards( images: List[ Image.Image ] ) -> torch.FloatTensor:
     # Takes a list of images, returns a tensor of rewards equal to the length of the images.
     init_scores = torch.zeros( len(images), dtype = torch.float32 )
+
+    # If array is all nones, return 0 vector of length len(images)
+    if all(image is None for image in images):
+        return init_scores
 
     # Calculate the dissimilarity matrix.
     dissimilarity_matrix = compare_to_set(images)
@@ -381,6 +394,10 @@ async def main():
     rewards = (1 - dissimilarity_weight) * rewards + dissimilarity_weight * dissimilarity_rewards    
     bt.logging.trace("Rewards:")
     bt.logging.trace(rewards)
+    
+    if torch.sum( rewards ) == 0:
+        bt.logging.trace("All rewards are 0, skipping block")
+        return
 
     # reorder rewards to match dendrites_to_query
     _rewards = torch.zeros( len(uids), dtype = torch.float32 )
