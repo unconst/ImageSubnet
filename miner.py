@@ -262,8 +262,8 @@ def GenerateImage(synapse, generator):
 
     return synapse
 
-def b( synapse: TextToImage ) -> bool:
-    return False
+def b( synapse: TextToImage ) -> (bool, str):
+    return False, ""
 
 def p( synapse: TextToImage ) -> float:
     return 0.0
