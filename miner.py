@@ -30,6 +30,7 @@ import torch
 import bittensor as bt
 import argparse
 from time import sleep
+from typing import Tuple
 
 bt.debug()
 bt.trace()
@@ -262,7 +263,7 @@ def GenerateImage(synapse, generator):
 
     return synapse
 
-def b( synapse: TextToImage ) -> (bool, str):
+def b( synapse: TextToImage ) -> Tuple[bool, str]:
     return False, ""
 
 def p( synapse: TextToImage ) -> float:
