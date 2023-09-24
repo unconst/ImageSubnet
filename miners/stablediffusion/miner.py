@@ -19,6 +19,15 @@
 
 # Confirm minimum python version
 import sys
+import os 
+
+# Get the current script's directory (assuming miner.py is in the miners folder)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Append the project's root directory to sys.path
+project_root = os.path.dirname(current_dir)
+sys.path.append(project_root)
+
 
 required_version = (3, 9)
 
@@ -51,6 +60,8 @@ parser.add_argument('--miner.height.min', type=int, default=None)
 parser.add_argument('--miner.width.max', type=int, default=2048)
 parser.add_argument('--miner.width.min', type=int, default=None)
 parser.add_argument('--miner.max_images', type=int, default=4)
+parser.add_argument('--miner.inference_steps', type=int, default=20)
+parser.add_argument('--miner.guidance_scale', type=int, default=7.5)
 parser.add_argument('--miner.max_pixels', type=int, default=(1024 * 1024 * 4)) # determines total number of images able to generate in one batch (height * width * num_images_per_prompt)
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
 parser.add_argument('--wallet.hotkey', type=str, default='default')
@@ -109,8 +120,6 @@ else:
 
 if config.miner.vae is not None:
     model.vae = AutoencoderKL.from_single_file( config.miner.vae ).to( config.device )
-
-bt.logging.trace
 
 if config.miner.model_type == 'XL':
     img2img = StableDiffusionXLPipeline(**model.components)
