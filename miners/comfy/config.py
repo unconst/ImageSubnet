@@ -38,9 +38,9 @@ if config.comfyui.path is None:
 # check to see if port 8188 is open
 import socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-result = sock.connect_ex(('localhost', 8188))
+result = sock.connect_ex(('localhost', config.comfyui.port))
 if result != 0:
-    raise argparse.ArgumentTypeError("ComfyUI is not detected on port 8188, please run ComfyUI and try again. Or to define a custom port use --miner.comfyui.port <port>")
+    raise argparse.ArgumentTypeError("ComfyUI is not detected on port 8188, please run ComfyUI and try again. Or to define a custom port use --comfyui.port <port>")
 
 # verify min/max height and width as they should all be divisible by 8
 if config.miner.height.max is not None and config.miner.height.max % 8 != 0:
