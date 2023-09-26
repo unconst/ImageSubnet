@@ -160,10 +160,6 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
 
     generator = torch.Generator(device=config.device).manual_seed(seed)
 
-    # Check if the batch size is valid.
-    if synapse.num_images_per_prompt > config.miner.max_batch_size:
-        raise ValueError(f"num_images_per_prompt ({synapse.num_images_per_prompt}) must be less than or equal to max_batch_size ({config.miner.max_batch_size})")
-
     output = GenerateImage(synapse, generator)
     print(output.images)
 
@@ -213,10 +209,6 @@ async def forward_i2i( synapse: ImageToImage ) -> ImageToImage:
         seed = torch.randint(1000000000, (1,)).item()
 
     generator = torch.Generator(device=config.device).manual_seed(seed)
-
-    # Check if the batch size is valid.
-    if synapse.num_images_per_prompt > config.miner.max_batch_size:
-        raise ValueError(f"num_images_per_prompt ({synapse.num_images_per_prompt}) must be less than or equal to max_batch_size ({config.miner.max_batch_size})")
 
     output = GenerateImage(synapse, generator)
     print(output.images)

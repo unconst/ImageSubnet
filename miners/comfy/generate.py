@@ -140,7 +140,7 @@ def i2i(synapse: ImageToImage) -> List[Image.Image]:
     }
 
     # Send the POST request with the file and data
-    r = requests.post(f'http://{config.comfyui.host}:{config.comfyui.port}/upload/image', files=files, data=data)
+    r = requests.post(f'http://{config.comfyui.address}:{config.comfyui.port}/upload/image', files=files, data=data)
 
 
     # delete tmp file
@@ -168,7 +168,7 @@ def i2i(synapse: ImageToImage) -> List[Image.Image]:
         api["7"]["inputs"]["text"] = negative_prompt
         api["3"]["inputs"]["seed"] = seed
 
-        denoise = {"low": 0.3, "medium": 0.7, "high": 0.9}.get(synapse.similarity, 0.0)
+        denoise = {"low": 0.8, "medium": 0.5, "high": 0.15}.get(synapse.similarity, 0.0)
 
         api["3"]["inputs"]["denoise"] = denoise
         api["3"]["inputs"]["steps"] = 25
@@ -191,8 +191,8 @@ def i2i(synapse: ImageToImage) -> List[Image.Image]:
         for image_data in response[node_id]:
             image = Image.open(io.BytesIO(image_data))
     
-            if image.size[0] != width or image.size[1] != height:
-                image = image.resize((width, height), Image.ANTIALIAS)
+            # if image.size[0] != width or image.size[1] != height:
+            #     image = image.resize((width, height), Image.ANTIALIAS)
 
             images.append(image)
 
