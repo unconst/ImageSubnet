@@ -14,6 +14,7 @@ class TextToImage( bt.Synapse ):
     num_images_per_prompt: int = pydantic.Field( 1 , allow_mutation = False)
     seed: int = pydantic.Field( -1 , allow_mutation = False)
     nsfw_allowed: bool = pydantic.Field( False , allow_mutation = False)
+    required_hash_fields: list[str] = pydantic.Field( ["text", "negative_prompt", "height", "width", "num_images_per_prompt", "seed", "nsfw_allowed"] , allow_mutation = False)
 class ImageToImage( TextToImage ):
     # Width x height will get overwritten by image size
     image: bt.Tensor = pydantic.Field( ... , allow_mutation = False) 
@@ -21,6 +22,8 @@ class ImageToImage( TextToImage ):
     # Miners must choose how to define similarity themselves based on their model
     # by default, the strength values are 0.3, 0.7, 0.9
     similarity: Literal["low", "medium", "high"] = pydantic.Field( "medium" , allow_mutation = False) 
+
+    required_hash_fields: list[str] = pydantic.Field(  ["text", "negative_prompt", "height", "width", "num_images_per_prompt", "seed", "nsfw_allowed", "image", "similarity"] , allow_mutation = False)
 
 
 

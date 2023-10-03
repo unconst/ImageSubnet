@@ -13,10 +13,10 @@ bt.trace()
 
 
 # metagraph
-# metagraph = bt.metagraph(64, network="test")
-# axons = metagraph.axons
+metagraph = bt.metagraph(64, network="test")
+axons = metagraph.axons
 
-axon = bt.axon(port=8081)
+myaxonid = 23
 
 query = TextToImage(
     text="an (anime:1.2) beautiful autumn forest scenery with the wind blowing the leaves",
@@ -28,7 +28,7 @@ query = TextToImage(
 )
 
 call_single_uid = dendrite(
-    axon,
+    axons[myaxonid],
     synapse=query,
     timeout=30.0
 )
@@ -45,16 +45,20 @@ x = asyncio.run(query_async(call_single_uid))
 for image in x[0].images:
     # Convert the raw tensor from the Synapse into a PIL image and display it.
     transforms.ToPILImage()( bt.Tensor.deserialize(image) ).show()
-def i2i(t2i: TextToImage, **kargs) -> ImageToImage:
-    query = ImageToImage(
-        text=t2i.text,
-        negative_prompt=t2i.negative_prompt,
-        height=t2i.height,
-        width=t2i.width,
-        num_images_per_prompt=t2i.num_images_per_prompt,
-        seed=696969,
-        **kargs,
-    )
+def i2i(t2i: TextToImage, **kwargs) -> ImageToImage:
+    params = {
+        'text': t2i.text,
+        'negative_prompt': t2i.negative_prompt,
+        'height': t2i.height,
+        'width': t2i.width,
+        'num_images_per_prompt': t2i.num_images_per_prompt,
+        'seed': 696969,
+    }
+    
+    # Update the parameters with the provided kwargs
+    params.update(kwargs)
+
+    query = ImageToImage(**params)
 
     call_single_uid = dendrite(
         bt.axon(port=8081),
@@ -72,6 +76,6 @@ def show_images(i2i_result: ImageToImage) -> None:
         # Convert the raw tensor from the Synapse into a PIL image and display it.
         transforms.ToPILImage()( bt.Tensor.deserialize(image) ).show()
 
-show_images(i2i(query, image=image, similarity="high"))
-show_images(i2i(query, image=image, similarity="medium"))
-show_images(i2i(query, image=image, similarity="low"))
+show_images(i2i(query, image=image, similarity="high", text="an (anime:1.2) woman walking on a path in an autumn forest"))
+show_images(i2i(query, image=image, similarity="medium", text="an (anime:1.2) woman walking on a path in an autumn forest"))
+show_images(i2i(query, image=image, similarity="low", text="an (anime:1.2) woman walking on a path in an autumn forest"))
