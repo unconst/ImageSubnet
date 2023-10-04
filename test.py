@@ -16,7 +16,10 @@ bt.trace()
 metagraph = bt.metagraph(64, network="test")
 axons = metagraph.axons
 
-myaxonid = 23
+myaxonid = -1 # set this to be your axon id
+if myaxonid == -1:
+    print("Please set myaxonid in test.py:19 to be your axon id")
+    exit()
 
 query = TextToImage(
     text="an (anime:1.2) beautiful autumn forest scenery with the wind blowing the leaves",
@@ -61,7 +64,7 @@ def i2i(t2i: TextToImage, **kwargs) -> ImageToImage:
     query = ImageToImage(**params)
 
     call_single_uid = dendrite(
-        bt.axon(port=8081),
+        axons[myaxonid],
         synapse=query,
         timeout=30.0
     )
