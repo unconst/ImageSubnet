@@ -26,8 +26,8 @@ from protocol import TextToImage
 
 # Load the config.
 parser = argparse.ArgumentParser()
-parser.add_argument( '--netuid', type = int, default = 64 )
-parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
+parser.add_argument( '--netuid', type = int, default = 8 )
+parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://finney.opentensor.ai')
 parser.add_argument('--subtensor._mock', type=bool, default=False)
 parser.add_argument('--validator.allow_nsfw', type=bool, default=False)
 parser.add_argument('--validator.save_dir', type=str, default='./images')
@@ -52,6 +52,7 @@ if not os.path.exists(config.validator.save_dir) and config.validator.save_image
 wallet = bt.wallet( config = config )
 sub = bt.subtensor( config = config )
 meta = sub.metagraph( config.netuid )
+meta.sync()
 dend = bt.dendrite( wallet = wallet )
 
 import torchvision.models as models
