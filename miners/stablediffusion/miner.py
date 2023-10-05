@@ -63,15 +63,16 @@ parser.add_argument('--miner.max_images', type=int, default=4)
 parser.add_argument('--miner.inference_steps', type=int, default=20)
 parser.add_argument('--miner.guidance_scale', type=int, default=7.5)
 parser.add_argument('--miner.max_pixels', type=int, default=(1024 * 1024 * 4)) # determines total number of images able to generate in one batch (height * width * num_images_per_prompt)
-parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://test.finney.opentensor.ai')
+parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://entrypoint-finney.opentensor.ai:443')
 parser.add_argument('--wallet.hotkey', type=str, default='default')
 parser.add_argument('--wallet.name', type=str, default='default')
 parser.add_argument('--wallet.path', type=str, default='~/.bittensor/wallets')
-parser.add_argument('--netuid', type=int, default=64)
+parser.add_argument('--netuid', type=int, default=5)
 parser.add_argument('--axon.port', type=int, default=3000)
 
 config = bt.config( parser )
 subtensor = bt.subtensor( config.subtensor.chain_endpoint, config=config )
+meta = subtensor.metagraph( config.netuid )
 
 # if model_type is not ['XL', '1.5', or '2.0'], then we will error and provide the values that are allowed
 if config.miner.model_type not in ['XL', '1.5', '2.0']:
@@ -91,8 +92,10 @@ if config.miner.width.min is not None and config.miner.width.min % 8 != 0:
 from utils import StableDiffusionSafetyChecker
 from transformers import CLIPImageProcessor
 
+DEVICE = torch.device(config.device)
+
 bt.logging.trace("Loading safety checker")
-safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( config.device )
+safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
 processor = CLIPImageProcessor()
 
 if config.miner.allow_nsfw:
@@ -111,15 +114,15 @@ model_path = config.miner.model
 if model_path.endswith('.safetensors') or model_path.endswith('.ckpt'):
     # Load from local file or from url.
     if config.miner.model_type == 'XL':
-        model = StableDiffusionXLPipeline.from_single_file( model_path ).to( config.device )
+        model = StableDiffusionXLPipeline.from_single_file( model_path ).to( DEVICE )
     else:
-        model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
+        model = StableDiffusionPipeline.from_ckpt( model_path, torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( DEVICE )
 else:
     # Load from huggingface model hub.
-    model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( config.device )
+    model =  StableDiffusionPipeline.from_pretrained( model_path , custom_pipeline="lpw_stable_diffusion", torch_dtype=torch.float16, safety_checker=None, requires_safety_checker=False ).to( DEVICE )
 
 if config.miner.vae is not None:
-    model.vae = AutoencoderKL.from_single_file( config.miner.vae ).to( config.device )
+    model.vae = AutoencoderKL.from_single_file( config.miner.vae ).to( DEVICE )
 
 if config.miner.model_type == 'XL':
     img2img = StableDiffusionXLPipeline(**model.components)
@@ -139,7 +142,7 @@ async def f( synapse: TextToImage ) -> TextToImage:
     if(seed == -1):
         seed = torch.randint(1000000000, (1,)).item()
 
-    generator = torch.Generator(device=config.device).manual_seed(seed)
+    generator = torch.Generator(device=DEVICE).manual_seed(seed)
 
     # Check if the batch size is valid.
     if synapse.num_images_per_prompt > config.miner.max_batch_size:
@@ -173,8 +176,8 @@ async def f( synapse: TextToImage ) -> TextToImage:
 
 def CheckNSFW(output, synapse):
     if not config.miner.allow_nsfw or not synapse.allow_nsfw:
-        clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( config.device )
-        images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( config.device ))
+        clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( DEVICE )
+        images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( DEVICE ))
         return has_nsfw_concept
     else:
         return [False] * len(output.images)
@@ -292,6 +295,25 @@ bt.logging.trace('Miner running. ^C to exit.')
 
 while True:
     try:
+        if meta.block % 100 == 0:
+            bt.logging.trace(f"Setting miner weight")
+            # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
+            # set the weight of that uid to 1.0
+            uid = None
+            for axon in meta.axons:
+                if axon.hotkey == config.wallet.hotkey:
+                    uid = axon.uid
+                    break
+            if uid is not None:
+                # 0 weights for all uids
+                weights = torch.Tensor([0.0] * len(meta.uids))
+                # 1 weight for uid
+                weights[uid] = 1.0
+                processed_weights = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
+                meta.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
+                bt.logging.trace("Miner weight set!")
+            else:
+                bt.logging.warning(f"Could not find uid with hotkey {config.wallet.hotkey} to set weight")
         sleep(1)
     except KeyboardInterrupt:
         break

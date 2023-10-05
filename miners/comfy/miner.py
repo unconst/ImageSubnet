@@ -52,13 +52,16 @@ from protocol import TextToImage, ImageToImage
 from generate import t2i, i2i
 
 subtensor = bt.subtensor( config.subtensor.chain_endpoint, config=config )
+meta = subtensor.metagraph( config.netuid )
 
 transform = transforms.Compose([
     transforms.PILToTensor()
 ])
 
+DEVICE = torch.device(config.device)
+
 bt.logging.trace("Loading safety checker")
-safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( config.device )
+safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
 processor = CLIPImageProcessor()
 
 if config.miner.allow_nsfw:
@@ -68,8 +71,8 @@ if config.miner.allow_nsfw:
 def CheckNSFW(output, synapse):
     if not config.miner.allow_nsfw or not synapse.allow_nsfw:
         print(output.images, "output images")
-        clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( config.device )
-        images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( config.device ))
+        clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( DEVICE )
+        images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( DEVICE ))
         return has_nsfw_concept
     else:
         return [False] * len(output.images)
@@ -158,7 +161,7 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     if(seed == -1):
         seed = torch.randint(1000000000, (1,)).item()
 
-    generator = torch.Generator(device=config.device).manual_seed(seed)
+    generator = torch.Generator(device=DEVICE).manual_seed(seed)
 
     output = GenerateImage(synapse, generator)
     print(output.images)
@@ -208,7 +211,7 @@ async def forward_i2i( synapse: ImageToImage ) -> ImageToImage:
     if(seed == -1):
         seed = torch.randint(1000000000, (1,)).item()
 
-    generator = torch.Generator(device=config.device).manual_seed(seed)
+    generator = torch.Generator(device=DEVICE).manual_seed(seed)
 
     output = GenerateImage(synapse, generator)
     print(output.images)
@@ -259,6 +262,25 @@ bt.logging.trace('Miner running. ^C to exit.')
 
 while True:
     try:
+        if meta.block % 100 == 0:
+            bt.logging.trace(f"Setting miner weight")
+            # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
+            # set the weight of that uid to 1.0
+            uid = None
+            for axon in meta.axons:
+                if axon.hotkey == config.wallet.hotkey:
+                    uid = axon.uid
+                    break
+            if uid is not None:
+                # 0 weights for all uids
+                weights = torch.Tensor([0.0] * len(meta.uids))
+                # 1 weight for uid
+                weights[uid] = 1.0
+                processed_weights = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
+                meta.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
+                bt.logging.trace("Miner weight set!")
+            else:
+                bt.logging.warning(f"Could not find uid with hotkey {config.wallet.hotkey} to set weight")
         sleep(1)
     except KeyboardInterrupt:
         break
