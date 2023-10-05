@@ -180,7 +180,7 @@ def calculate_mean_dissimilarity(dissimilarity_matrix):
 # For image to text generation.
 # Load the scoring model
 import ImageReward as RM
-scoring_model = RM.load("ImageReward-v1.0")
+scoring_model = RM.load("ImageReward-v1.0", device=DEVICE)
 
 # Load prompt dataset.
 from datasets import load_dataset
