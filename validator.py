@@ -195,6 +195,36 @@ prompt_generation_pipe = pipeline("text-generation", model="succinctly/text2imag
 # Form the dendrite pool.
 dendrite_pool = AsyncDendritePool( wallet = wallet, metagraph = meta )
 
+# list of sizes
+sizes = [512, 768, 1024, 1536]
+
+# list of aspect ratios [(1, 1), (4, 3), (16, 9)]
+aspect_ratios = [(1, 1), (4, 3), (3, 4), (16, 9), (9, 16)]
+
+def get_resolution(size_index = None, aspect_ratio_index = None):
+    # pick a random size and aspect ratio
+    if size_index is None or size_index >= len(sizes):
+        size_index = random.randint(0, len(sizes)-1)
+    if aspect_ratio_index is None or aspect_ratio_index >= len(aspect_ratios):
+        aspect_ratio_index = random.randint(0, len(aspect_ratios)-1)
+    
+    # get the size and aspect ratio
+    size = sizes[size_index]
+    aspect_ratio = aspect_ratios[aspect_ratio_index]
+
+    # calculate the width and height
+    width = size
+    height = size
+    # keep the largest side as size, and calculate the other side based on the aspect ratio
+    if aspect_ratio[0] > aspect_ratio[1]:
+        width = size
+        height = int(size * aspect_ratio[1] / aspect_ratio[0])
+    else:
+        width = int(size * aspect_ratio[0] / aspect_ratio[1])
+        height = size
+
+    return (width, height)
+
 
 # Init the validator weights.
 alpha = 0.01
@@ -348,17 +378,38 @@ async def main():
 
     bt.logging.trace(f"Inital prompt: {initial_prompt}\nPrompt: {prompt}\n")
 
+    (width, height) = get_resolution()
+
     # Create the query.
     query = TextToImage(
         text = prompt,
         num_images_per_prompt = num_images,
-        height = 512,
-        width = 512,
+        height = width,
+        width = height,
         negative_prompt = "",
-        num_inference_steps = 50,
-        guidance_scale=random.uniform(7.5, 10.5),
         nsfw_allowed=config.validator.allow_nsfw,
     )
+
+    # total pixels
+    total_pixels = query.height * query.width
+
+    base_timeout = 12
+    base_timeout_size = 512*512
+
+    max_timeout = 30
+
+    # calculate timeout based on size of image, image size goes up quadraticly but timeout goes up linearly, so if you go from 512,512 -> 1024,1024, the timeout should be 3x
+    if (total_pixels / base_timeout_size) > 1:
+        timeout = base_timeout * (total_pixels / base_timeout_size) * 0.75
+    else:
+        timeout = base_timeout
+    # if timeout is greater than max timeout, set it to max timeout
+    if timeout > max_timeout:
+        timeout = max_timeout
+
+    # increase timeout for multiple images
+    if (num_images > 1):
+        timeout = timeout * (num_images*(2/3))
 
     bt.logging.trace("Calling dendrite pool")
     bt.logging.trace(f"Query: {query.text}")
@@ -369,7 +420,7 @@ async def main():
     responses = await dendrite_pool.async_forward(
         uids = dendrites_to_query,
         query = query,
-        timeout = 30
+        timeout = timeout
     )
 
     if not config.validator.allow_nsfw:
