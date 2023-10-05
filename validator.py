@@ -26,7 +26,7 @@ from protocol import TextToImage
 
 # Load the config.
 parser = argparse.ArgumentParser()
-parser.add_argument( '--netuid', type = int, default = 8 )
+parser.add_argument( '--netuid', type = int, default = 5 )
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://finney.opentensor.ai')
 parser.add_argument('--subtensor._mock', type=bool, default=False)
 parser.add_argument('--validator.allow_nsfw', type=bool, default=False)
@@ -65,6 +65,9 @@ from transformers import CLIPImageProcessor
 from fabric.utils import get_free_gpu, tile_images
 import matplotlib.font_manager as fm
 
+
+DEVICE = torch.device(config.device if torch.cuda.is_available() else "cpu")
+
 def get_system_fonts():
     font_list = fm.findSystemFonts(fontpaths=None, fontext='ttf')
     return font_list
@@ -87,11 +90,10 @@ def load_and_preprocess_image_array(image_array, target_size):
     return torch.cat(preprocessed_images, dim=0)
 
 def extract_style_vectors(image_array, target_size=(224, 224)):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _model = models.vgg19(pretrained=True).features.to(device)
+    _model = models.vgg19(pretrained=True).features.to(DEVICE)
     _model = nn.Sequential(*list(_model.children())[:35])
 
-    images = load_and_preprocess_image_array(image_array, target_size).to(device)
+    images = load_and_preprocess_image_array(image_array, target_size).to(DEVICE)
     
     with torch.no_grad():
         style_vectors = _model(images)
@@ -293,7 +295,7 @@ def add_black_border(image, border_size):
     return new_image
 
 
-safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( config.device )
+safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
 processor = CLIPImageProcessor()
 
 # find DejaVu Sans font
@@ -374,8 +376,8 @@ async def main():
         for i, response in enumerate(responses):
             if len(response.images) == 0:
                 continue
-            clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( config.device )
-            images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( config.device ))
+            clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( DEVICE )
+            images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( DEVICE ))
 
             any_nsfw = any(has_nsfw_concept)
             if any_nsfw:
@@ -471,7 +473,7 @@ async def main():
 
     # Optionally set weights
     current_block = sub.block
-    if current_block % 50 == 0:
+    if current_block % 100 == 0:
         bt.logging.trace(f"Setting weights")
         uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
             uids = meta.uids,
