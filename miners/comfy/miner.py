@@ -53,6 +53,7 @@ from generate import t2i, i2i
 
 subtensor = bt.subtensor( config.subtensor.chain_endpoint, config=config )
 meta = subtensor.metagraph( config.netuid )
+wallet = bt.wallet( config=config )
 
 transform = transforms.Compose([
     transforms.PILToTensor()
@@ -268,7 +269,7 @@ while True:
             # set the weight of that uid to 1.0
             uid = None
             for axon in meta.axons:
-                if axon.hotkey == config.wallet.hotkey:
+                if axon.hotkey == wallet.hotkey:
                     uid = axon.uid
                     break
             if uid is not None:

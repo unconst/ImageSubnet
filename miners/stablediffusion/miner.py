@@ -73,6 +73,8 @@ parser.add_argument('--axon.port', type=int, default=3000)
 config = bt.config( parser )
 subtensor = bt.subtensor( config.subtensor.chain_endpoint, config=config )
 meta = subtensor.metagraph( config.netuid )
+wallet = bt.wallet( config=config )
+
 
 # if model_type is not ['XL', '1.5', or '2.0'], then we will error and provide the values that are allowed
 if config.miner.model_type not in ['XL', '1.5', '2.0']:
@@ -301,7 +303,7 @@ while True:
             # set the weight of that uid to 1.0
             uid = None
             for axon in meta.axons:
-                if axon.hotkey == config.wallet.hotkey:
+                if axon.hotkey == wallet.hotkey:
                     uid = axon.uid
                     break
             if uid is not None:
