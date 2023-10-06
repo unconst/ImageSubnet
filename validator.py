@@ -480,7 +480,12 @@ async def main():
     for i, response in enumerate(responses):
         images = response.images
         for j, image in enumerate(images):
-            img = bt.Tensor.deserialize(image)
+            try:
+                img = bt.Tensor.deserialize(image)
+            except:
+                bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
+                del responses[i].images[j]
+                continue
             if img.sum() == 0:
                 bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
                 del responses[i].images[j]
