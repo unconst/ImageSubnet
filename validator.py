@@ -429,6 +429,14 @@ async def main():
         timeout = timeout
     )
 
+    # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
+    for i, response in enumerate(responses):
+        valid, error = response.validate()
+        if not valid:
+            bt.logging.trace(f"Detected invalid response from dendrite {dendrites_to_query[i]}: {error}")
+            del responses[i]
+            del dendrites_to_query[i]
+
     if not config.validator.allow_nsfw:
         for i, response in enumerate(responses):
             # delete all none images

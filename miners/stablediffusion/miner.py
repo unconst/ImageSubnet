@@ -275,6 +275,11 @@ def GenerateImage(synapse, generator):
         img_tensor = transform(image)
         synapse.images.append( bt.Tensor.serialize( img_tensor ) )
 
+    # validate the synapse
+    valid, error = synapse.validate()
+    if not valid:
+        raise ValueError(f"Invalid synapse: {error}")
+
     return synapse
 
 def b( synapse: TextToImage ) -> Tuple[bool, str]:

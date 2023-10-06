@@ -137,12 +137,9 @@ def GenerateImage(synapse, generator):
     try:
         # If we are doing image to image, we need to use a different pipeline.
         image = synapse.image
-        bt.logging.trace("Image to image pipeline")
         output_images = i2i(synapse)
     except AttributeError as e:
-        print(e)
         # run normal text to image pipeline
-        bt.logging.trace("Text to image pipeline")
         output_images = t2i(synapse)
 
     bt.logging.trace("Image generated")
@@ -189,6 +186,11 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     for image in output_images:
         img_tensor = transform(image)
         synapse.images.append( bt.Tensor.serialize( img_tensor ) )
+
+    # validate the synapse
+    valid, error = synapse.validate()
+    if not valid:
+        raise ValueError(f"Invalid synapse: {error}")
 
     return synapse
 
