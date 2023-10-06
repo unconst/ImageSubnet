@@ -255,24 +255,30 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
             continue
 
         img_scores = torch.zeros( num_images, dtype = torch.float32 )
+        try:
+            with torch.no_grad():
 
-        with torch.no_grad():
+                images = []
 
-            images = []
+                for j, tensor_image in enumerate(response.images):
+                    # Lets get the image.
+                    image = transforms.ToPILImage()( bt.Tensor.deserialize(tensor_image) )
 
-            for j, tensor_image in enumerate(response.images):
-                # Lets get the image.
-                image = transforms.ToPILImage()( bt.Tensor.deserialize(tensor_image) )
-
-                images.append(image)
-            
-            ranking, scores = scoring_model.inference_rank(query.text, images)
-            img_scores = torch.tensor(scores)
-            # push top image to images (i, image)
-            if len(images) > 1:
-                top_images.append(images[ranking[0]-1])
-            else:
-                top_images.append(images[0])
+                    images.append(image)
+                
+                ranking, scores = scoring_model.inference_rank(query.text, images)
+                img_scores = torch.tensor(scores)
+                # push top image to images (i, image)
+                if len(images) > 1:
+                    top_images.append(images[ranking[0]-1])
+                else:
+                    top_images.append(images[0])
+        except Exception as e:
+            print(e)
+            print("error in " + str(i))
+            print(response)
+            top_images.append(None)
+            continue
 
         
         # Get the average weight for the uid from _weights.
@@ -431,18 +437,22 @@ async def main():
                     del responses[i].images[j]
             if len(response.images) == 0:
                 continue
-            clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( DEVICE )
-            images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( DEVICE ))
+            try:
+                clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( DEVICE )
+                images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( DEVICE ))
 
-            any_nsfw = any(has_nsfw_concept)
-            if any_nsfw:
-                bt.logging.trace(f"Detected NSFW image(s) from dendrite {dendrites_to_query[i]}")
+                any_nsfw = any(has_nsfw_concept)
+                if any_nsfw:
+                    bt.logging.trace(f"Detected NSFW image(s) from dendrite {dendrites_to_query[i]}")
 
-            # remove all nsfw images from the response
-            for j, has_nsfw in enumerate(has_nsfw_concept):
-                if has_nsfw:
-                    del responses[i].images[j]
-
+                # remove all nsfw images from the response
+                for j, has_nsfw in enumerate(has_nsfw_concept):
+                    if has_nsfw:
+                        del responses[i].images[j]
+            except Exception as e:
+                print(response.images)
+                bt.logging.trace(f"Error in NSFW detection: {e}")
+                pass
 
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
     dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( best_images )
