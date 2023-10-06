@@ -425,6 +425,10 @@ async def main():
 
     if not config.validator.allow_nsfw:
         for i, response in enumerate(responses):
+            # delete all none images
+            for j, image in enumerate(response.images):
+                if image is None:
+                    del responses[i].images[j]
             if len(response.images) == 0:
                 continue
             clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( DEVICE )
