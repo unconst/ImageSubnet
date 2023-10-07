@@ -47,7 +47,7 @@ from config import config
 from utils import StableDiffusionSafetyChecker
 from transformers import CLIPImageProcessor
 import torchvision.transforms as transforms
-from protocol import TextToImage, ImageToImage
+from protocol import TextToImage, ImageToImage, validate_synapse
 
 from generate import t2i, i2i
 
@@ -188,7 +188,7 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
         synapse.images.append( bt.Tensor.serialize( img_tensor ) )
 
     # validate the synapse
-    valid, error = synapse.validate()
+    valid, error = validate_synapse(synapse)
     if not valid:
         raise ValueError(f"Invalid synapse: {error}")
 

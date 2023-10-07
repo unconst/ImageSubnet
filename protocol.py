@@ -5,18 +5,18 @@ import pydantic
 import bittensor as bt
 from typing import Literal
 
-def validate( synapse ) -> (bool, str):
+def validate_synapse( synapse ) -> (bool, str):
     # check tensor type first
     if not all( [ isinstance(image, bt.Tensor) for image in synapse.images ] ):
-        return False, "images are not tensors"
+        return (False, "images are not tensors")
     # check number of images
     if len(synapse.images) != synapse.num_images_per_prompt:
-        return False, "number of images does not match num_images_per_prompt"
+        return (False, "number of images does not match num_images_per_prompt")
     # check image size
     if not all( [ image.shape[1] == synapse.height and image.shape[2] == synapse.width for image in synapse.images ] ):
-        return False, "image size does not match height and width"
+        return (False, "image size does not match height and width")
     # if all checks pass, return True, ""
-    return True, ""
+    return (True, "")
 
 class TextToImage( bt.Synapse ):
     images: list[ bt.Tensor ] = []

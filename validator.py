@@ -22,7 +22,7 @@ bt.trace()
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
-from protocol import TextToImage, validate
+from protocol import TextToImage, validate_synapse
 
 # Load the config.
 parser = argparse.ArgumentParser()
@@ -431,7 +431,7 @@ async def main():
 
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
     for i, response in enumerate(responses):
-        valid, error = validate(response)
+        valid, error = validate_synapse(response)
         if not valid:
             bt.logging.trace(f"Detected invalid response from dendrite {dendrites_to_query[i]}: {error}")
             del responses[i]
