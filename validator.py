@@ -12,7 +12,7 @@ import datetime
 
 import torchvision.transforms as transforms
 from dendrite import AsyncDendritePool
-from typing import List
+from typing import List, Tuple
 
 import asyncio
 from time import sleep
@@ -22,7 +22,7 @@ bt.trace()
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
-from protocol import TextToImage, validate_synapse
+from protocol import TextToImage, validate_synapse, ValidatorSettings
 
 # Load the config.
 parser = argparse.ArgumentParser()
@@ -231,6 +231,15 @@ alpha = 0.01
 # weights = torch.rand_like( meta.uids, dtype = torch.float32 )
 weights = torch.ones_like( meta.uids , dtype = torch.float32 ) * 0.5
 
+# multiply weights by the active tensor
+curr_block = sub.block
+
+# loop over all last_updated, any that are within 600 blocks are set to 1 others are set to 0 
+weights = weights * meta.last_updated > curr_block - 600
+
+# all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
+weights = weights * meta.total_stake < 1.024e3
+
  # Amount of images
 num_images = 1
 dendrites_per_query = 25
@@ -367,8 +376,12 @@ async def main():
     bt.logging.trace(uids)
 
     # Select up to dendrites_per_query random dendrites.
-    dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(uids) ) )
-    # dendrites_to_query = uids
+    queryable_uids = meta.last_updated > curr_block - 600 * meta.total_stake < 1.024e3
+
+    # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
+    zipped_uids = list(zip(uids, queryable_uids))
+    filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
+    dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(filtered_uids) ) )
 
     # Generate a random synthetic prompt. cut to first 20 characters.
     initial_prompt = next(dataset)['prompt']
@@ -566,6 +579,24 @@ async def main():
             uids = uids,
         )
 
+async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
+    synapse.nsfw_allowed = config.miner.allow_nsfw
+    return synapse
+
+def blacklist_settings( synapse: ValidatorSettings ) -> Tuple[bool, str]:
+    return False, ""
+
+def priority_settings( synapse: ValidatorSettings ) -> float:
+    return 0.0
+
+def verify_settings( synapse: ValidatorSettings ) -> None:
+    pass
+
+
+axon = bt.axon( config=config, wallet=wallet, ip="127.0.0.1", external_ip=bt.utils.networking.get_external_ip()).start()
+
+# serve axon
+sub.serve_axon( axon=axon, netuid=config.netuid )
 
 while True:
      # wait for main to finish

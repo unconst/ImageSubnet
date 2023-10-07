@@ -47,7 +47,7 @@ from config import config
 from utils import StableDiffusionSafetyChecker
 from transformers import CLIPImageProcessor
 import torchvision.transforms as transforms
-from protocol import TextToImage, ImageToImage, validate_synapse
+from protocol import TextToImage, ImageToImage, validate_synapse, MinerSettings
 
 from generate import t2i, i2i
 
@@ -254,8 +254,28 @@ def priority_i2i( synapse: ImageToImage ) -> float:
 def verify_i2i( synapse: ImageToImage ) -> None:
     pass
 
+async def forward_settings( synapse: MinerSettings ) -> MinerSettings:
+    synapse.nsfw_allowed = config.miner.allow_nsfw
+    synapse.max_images = config.miner.max_images
+    synapse.max_pixels = config.miner.max_pixels
+    synapse.min_width = config.miner.width.min
+    synapse.max_width = config.miner.width.max
+    synapse.min_height = config.miner.height.min
+    synapse.max_height = config.miner.height.max
+    return synapse
+
+def blacklist_settings( synapse: MinerSettings ) -> Tuple[bool, str]:
+    return False, ""
+
+def priority_settings( synapse: MinerSettings ) -> float:
+    return 0.0
+
+def verify_settings( synapse: MinerSettings ) -> None:
+    pass
+
+
 wallet = bt.wallet( config=config )
-axon = bt.axon( config=config, wallet=wallet, ip="127.0.0.1", external_ip=bt.utils.networking.get_external_ip()).attach( forward_t2i, blacklist_t2i, priority_t2i, verify_t2i ).attach( forward_i2i, blacklist_i2i, priority_i2i, verify_i2i ).start()
+axon = bt.axon( config=config, wallet=wallet, ip="127.0.0.1", external_ip=bt.utils.networking.get_external_ip()).attach( forward_t2i, blacklist_t2i, priority_t2i, verify_t2i ).attach( forward_i2i, blacklist_i2i, priority_i2i, verify_i2i ).attach( forward_settings, blacklist_settings, priority_settings, verify_settings ).start()
 
 # serve axon
 subtensor.serve_axon( axon=axon, netuid=config.netuid )
@@ -265,7 +285,7 @@ bt.logging.trace('Miner running. ^C to exit.')
 
 while True:
     try:
-        if meta.block % 100 == 0:
+        if subtensor.block % 100 == 0:
             bt.logging.trace(f"Setting miner weight")
             # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
             # set the weight of that uid to 1.0

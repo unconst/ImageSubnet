@@ -5,12 +5,12 @@ import pydantic
 import bittensor as bt
 from typing import Literal
 
-def validate_synapse( synapse ) -> (bool, str):
+def validate_synapse( synapse, enforce_batch_size = False ) -> (bool, str):
     # check tensor type first
     if not all( [ isinstance(image, bt.Tensor) for image in synapse.images ] ):
         return (False, "images are not tensors")
     # check number of images
-    if len(synapse.images) != synapse.num_images_per_prompt:
+    if len(synapse.images) != synapse.num_images_per_prompt and enforce_batch_size:
         return (False, "number of images does not match num_images_per_prompt")
     # check image size
     if not all( [ image.shape[1] == synapse.height and image.shape[2] == synapse.width for image in synapse.images ] ):
@@ -38,6 +38,19 @@ class ImageToImage( TextToImage ):
     similarity: Literal["low", "medium", "high"] = pydantic.Field( "medium" , allow_mutation = False) 
 
     required_hash_fields: list[str] = pydantic.Field(  ["text", "negative_prompt", "height", "width", "num_images_per_prompt", "seed", "nsfw_allowed", "image", "similarity"] , allow_mutation = False)
+
+class ValidatorSettings( bt.Synapse ):
+    nsfw_allowed: bool
+
+
+class MinerSettings( bt.Synapse ):
+    nsfw_allowed: bool
+    max_images: int
+    max_pixels: int # max pixels may be different than (max_images * height * width)
+    min_width: int
+    max_width: int
+    min_height: int
+    max_height: int
 
 
 # TO BE IMPLEMENTED
