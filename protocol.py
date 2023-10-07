@@ -5,6 +5,19 @@ import pydantic
 import bittensor as bt
 from typing import Literal
 
+def validate( synapse ) -> (bool, str):
+    # check tensor type first
+    if not all( [ isinstance(image, bt.Tensor) for image in synapse.images ] ):
+        return False, "images are not tensors"
+    # check number of images
+    if len(synapse.images) != synapse.num_images_per_prompt:
+        return False, "number of images does not match num_images_per_prompt"
+    # check image size
+    if not all( [ image.shape[1] == synapse.height and image.shape[2] == synapse.width for image in synapse.images ] ):
+        return False, "image size does not match height and width"
+    # if all checks pass, return True, ""
+    return True, ""
+
 class TextToImage( bt.Synapse ):
     images: list[ bt.Tensor ] = []
     text: str = pydantic.Field( ... , allow_mutation = False)
@@ -15,23 +28,6 @@ class TextToImage( bt.Synapse ):
     seed: int = pydantic.Field( -1 , allow_mutation = False)
     nsfw_allowed: bool = pydantic.Field( False , allow_mutation = False)
     required_hash_fields: list[str] = pydantic.Field( ["text", "negative_prompt", "height", "width", "num_images_per_prompt", "seed", "nsfw_allowed"] , allow_mutation = False)
-
-    # def validate( self ) -> bool:
-    #     return len(self.images) == self.num_images_per_prompt and all( [ image.shape[1] == self.height and image.shape[2] == self.width for image in self.images ] ) and all( [ isinstance(image, bt.Tensor) for image in self.images ] )
-
-    # rewrite the above commented function such that it returns True, "" if it is valid, and False, "error message" if it is invalid
-    def validate( self ) -> (bool, str):
-        # check tensor type first
-        if not all( [ isinstance(image, bt.Tensor) for image in self.images ] ):
-            return False, "images are not tensors"
-        # check number of images
-        if len(self.images) != self.num_images_per_prompt:
-            return False, "number of images does not match num_images_per_prompt"
-        # check image size
-        if not all( [ image.shape[1] == self.height and image.shape[2] == self.width for image in self.images ] ):
-            return False, "image size does not match height and width"
-        # if all checks pass, return True, ""
-        return True, ""
 
 class ImageToImage( TextToImage ):
     # Width x height will get overwritten by image size
