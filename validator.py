@@ -242,7 +242,7 @@ weights = weights * meta.last_update > curr_block - 600
 weights = weights * (meta.total_stake < 1.024e3) 
 
 # set all nodes without ips set to 0
-weights = weights * ([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids])
+weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids])
 
  # Amount of images
 num_images = 1
@@ -385,7 +385,7 @@ async def main():
     queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
 
     # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
-    queryable_uids = queryable_uids * ([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
+    queryable_uids = queryable_uids * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
 
     active_miners = torch.sum(queryable_uids)
     dendrites_per_query = total_dendrites_per_query
