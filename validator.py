@@ -239,11 +239,15 @@ curr_block = sub.block
 weights = weights * meta.last_update > curr_block - 600
 
 # all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
-weights = weights * (meta.total_stake < 1.024e3)
+weights = weights * (meta.total_stake < 1.024e3) 
+
+# set all nodes without ips set to 0
+weights = weights * ([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids])
 
  # Amount of images
 num_images = 1
 total_dendrites_per_query = 25
+minimum_dendrites_per_query = 3
 
 
 # Determine the rewards based on how close an image aligns to its prompt.
@@ -380,6 +384,9 @@ async def main():
     # Select up to dendrites_per_query random dendrites.
     queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
 
+    # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
+    queryable_uids = queryable_uids * ([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
+
     active_miners = torch.sum(queryable_uids)
     dendrites_per_query = total_dendrites_per_query
 
@@ -394,8 +401,16 @@ async def main():
         dendrites_per_query = total_dendrites_per_query
 
     # less than 1 set to 1
-    if dendrites_per_query < 1:
-        dendrites_per_query = 1
+    if dendrites_per_query < minimum_dendrites_per_query:
+        dendrites_per_query = minimum_dendrites_per_query
+
+    timeout_increase = 1
+
+    if dendrites_per_query > active_miners:
+        bt.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
+    elif active_miners < dendrites_per_query * 3:
+        bt.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
+        timeout_increase = 2
 
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
     zipped_uids = list(zip(uids, queryable_uids))
@@ -458,7 +473,7 @@ async def main():
     responses = await dendrite_pool.async_forward(
         uids = dendrites_to_query,
         query = query,
-        timeout = timeout
+        timeout = timeout * timeout_increase
     )
 
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
