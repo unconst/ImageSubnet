@@ -407,9 +407,9 @@ async def main():
     timeout_increase = 1
 
     if dendrites_per_query > active_miners:
-        bt.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
+        bt.logging.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
     elif active_miners < dendrites_per_query * 3:
-        bt.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
+        bt.logging.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
         timeout_increase = 2
 
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
