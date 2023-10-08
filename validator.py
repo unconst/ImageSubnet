@@ -249,6 +249,8 @@ num_images = 1
 total_dendrites_per_query = 25
 minimum_dendrites_per_query = 3
 
+last_updated_block = curr_block - (curr_block % 100)
+
 
 # Determine the rewards based on how close an image aligns to its prompt.
 def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ TextToImage ]) -> (torch.FloatTensor, List[ Image.Image ]):
@@ -598,7 +600,7 @@ async def main():
 
     # Optionally set weights
     current_block = sub.block
-    if current_block % 100 == 0:
+    if current_block - last_updated_block  >= 100:
         bt.logging.trace(f"Setting weights")
         uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
             uids = meta.uids,
@@ -612,6 +614,7 @@ async def main():
             weights = processed_weights,
             uids = uids,
         )
+        last_updated_block = current_block
 
 async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
     synapse.nsfw_allowed = config.miner.allow_nsfw

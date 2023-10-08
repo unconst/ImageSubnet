@@ -65,6 +65,8 @@ bt.logging.trace("Loading safety checker")
 safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
 processor = CLIPImageProcessor()
 
+last_updated_block = subtensor.block - (subtensor.block % 100)
+
 if config.miner.allow_nsfw:
     bt.logging.warning("NSFW is enabled. Without a filter, your miner may generate unwanted images. Please use with caution.")
 
@@ -285,7 +287,7 @@ bt.logging.trace('Miner running. ^C to exit.')
 
 while True:
     try:
-        if subtensor.block % 100 == 0:
+        if subtensor.block - last_updated_block >= 100:
             bt.logging.trace(f"Setting miner weight")
             # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
             # set the weight of that uid to 1.0
@@ -301,6 +303,7 @@ while True:
                 weights[uid] = 1.0
                 processed_weights = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
                 meta.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
+                last_updated_block = subtensor.block
                 bt.logging.trace("Miner weight set!")
             else:
                 bt.logging.warning(f"Could not find uid with hotkey {config.wallet.hotkey} to set weight")
