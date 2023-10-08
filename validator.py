@@ -239,7 +239,7 @@ curr_block = sub.block
 weights = weights * meta.last_update > curr_block - 600
 
 # all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
-weights = weights * meta.total_stake < 1.024e3
+weights = weights * (meta.total_stake < 1.024e3)
 
  # Amount of images
 num_images = 1
