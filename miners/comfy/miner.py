@@ -286,7 +286,7 @@ subtensor.serve_axon( axon=axon, netuid=config.netuid )
 bt.logging.trace('Miner running. ^C to exit.')
 
 while True:
-    try:
+    # try:
         if subtensor.block - last_updated_block >= 100:
             bt.logging.trace(f"Setting miner weight")
             # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
@@ -312,7 +312,8 @@ while True:
                     bt.logging.warning(f"Could not find uid with hotkey {config.wallet.hotkey} to set weight")
             except Exception as e:
                 bt.logging.warning(f"Could not set miner weight: {e}")
-                pass
+                raise e
+                # pass
         sleep(1)
-    except KeyboardInterrupt:
-        continue
+    # except KeyboardInterrupt:
+        # continue
