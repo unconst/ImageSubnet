@@ -305,7 +305,7 @@ while True:
                     # 1 weight for uid
                     weights[uid] = 1.0
                     processed_weights = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
-                    meta.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
+                    subtensor.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
                     last_updated_block = subtensor.block
                     bt.logging.trace("Miner weight set!")
                 else:
