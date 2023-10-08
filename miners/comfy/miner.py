@@ -293,9 +293,11 @@ while True:
             # set the weight of that uid to 1.0
             uid = None
             try:
-                for axon in meta.axons:
+                for _uid, axon in enumerate(meta.axons):
                     if axon.hotkey == wallet.hotkey.ss58_address:
-                        uid = axon.uid
+                        # uid = axon.uid
+                        # uid doesnt exist ona xon
+                        uid = _uid
                         break
                 if uid is not None:
                     # 0 weights for all uids
