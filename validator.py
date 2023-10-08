@@ -377,7 +377,7 @@ async def main():
     bt.logging.trace(uids)
 
     # Select up to dendrites_per_query random dendrites.
-    queryable_uids = meta.last_update > curr_block - 600 * meta.total_stake < 1.024e3
+    queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
 
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
     zipped_uids = list(zip(uids, queryable_uids))
