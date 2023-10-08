@@ -243,7 +243,8 @@ weights = weights * (meta.total_stake < 1.024e3)
 
  # Amount of images
 num_images = 1
-dendrites_per_query = 25
+total_dendrites_per_query = 25
+
 
 # Determine the rewards based on how close an image aligns to its prompt.
 def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ TextToImage ]) -> (torch.FloatTensor, List[ Image.Image ]):
@@ -378,6 +379,23 @@ async def main():
 
     # Select up to dendrites_per_query random dendrites.
     queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
+
+    active_miners = torch.sum(queryable_uids)
+    dendrites_per_query = total_dendrites_per_query
+
+    # if there are no active miners, set active_miners to 1
+    if active_miners == 0:
+        active_miners = 1
+
+    # if there are less than dendrites_per_query * 3 active miners, set dendrites_per_query to active_miners / 3
+    if active_miners < total_dendrites_per_query * 3:
+        dendrites_per_query = int(active_miners / 3)
+    else:
+        dendrites_per_query = total_dendrites_per_query
+
+    # less than 1 set to 1
+    if dendrites_per_query < 1:
+        dendrites_per_query = 1
 
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
     zipped_uids = list(zip(uids, queryable_uids))
