@@ -234,8 +234,8 @@ weights = torch.ones_like( meta.uids , dtype = torch.float32 ) * 0.5
 # multiply weights by the active tensor
 curr_block = sub.block
 
-# loop over all last_updated, any that are within 600 blocks are set to 1 others are set to 0 
-weights = weights * meta.last_updated > curr_block - 600
+# loop over all last_update, any that are within 600 blocks are set to 1 others are set to 0 
+weights = weights * meta.last_update > curr_block - 600
 
 # all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
 weights = weights * meta.total_stake < 1.024e3
@@ -376,7 +376,7 @@ async def main():
     bt.logging.trace(uids)
 
     # Select up to dendrites_per_query random dendrites.
-    queryable_uids = meta.last_updated > curr_block - 600 * meta.total_stake < 1.024e3
+    queryable_uids = meta.last_update > curr_block - 600 * meta.total_stake < 1.024e3
 
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
     zipped_uids = list(zip(uids, queryable_uids))
