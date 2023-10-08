@@ -65,7 +65,7 @@ bt.logging.trace("Loading safety checker")
 safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
 processor = CLIPImageProcessor()
 
-last_updated_block = subtensor.block - (subtensor.block % 100)
+last_updated_block = subtensor.block - 100
 
 if config.miner.allow_nsfw:
     bt.logging.warning("NSFW is enabled. Without a filter, your miner may generate unwanted images. Please use with caution.")
@@ -292,21 +292,25 @@ while True:
             # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
             # set the weight of that uid to 1.0
             uid = None
-            for axon in meta.axons:
-                if axon.hotkey == wallet.hotkey.ss58_address:
-                    uid = axon.uid
-                    break
-            if uid is not None:
-                # 0 weights for all uids
-                weights = torch.Tensor([0.0] * len(meta.uids))
-                # 1 weight for uid
-                weights[uid] = 1.0
-                processed_weights = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
-                meta.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
-                last_updated_block = subtensor.block
-                bt.logging.trace("Miner weight set!")
-            else:
-                bt.logging.warning(f"Could not find uid with hotkey {config.wallet.hotkey} to set weight")
+            try:
+                for axon in meta.axons:
+                    if axon.hotkey == wallet.hotkey.ss58_address:
+                        uid = axon.uid
+                        break
+                if uid is not None:
+                    # 0 weights for all uids
+                    weights = torch.Tensor([0.0] * len(meta.uids))
+                    # 1 weight for uid
+                    weights[uid] = 1.0
+                    processed_weights = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
+                    meta.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
+                    last_updated_block = subtensor.block
+                    bt.logging.trace("Miner weight set!")
+                else:
+                    bt.logging.warning(f"Could not find uid with hotkey {config.wallet.hotkey} to set weight")
+            except Exception as e:
+                bt.logging.warning(f"Could not set miner weight: {e}")
+                pass
         sleep(1)
     except KeyboardInterrupt:
-        break
+        continue
