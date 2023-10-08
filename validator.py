@@ -415,7 +415,7 @@ async def main():
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
     zipped_uids = list(zip(uids, queryable_uids))
     filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
-    dendrites_to_query = random.sample( uids, min( dendrites_per_query, len(filtered_uids) ) )
+    dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
 
     # Generate a random synthetic prompt. cut to first 20 characters.
     initial_prompt = next(dataset)['prompt']
