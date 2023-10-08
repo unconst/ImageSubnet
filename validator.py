@@ -363,7 +363,7 @@ if (config.validator.label_images == True):
     default_font = ImageFont.truetype(dejavu_font, 30)
 
 async def main():
-    global weights
+    global weights, last_updated_block
     # every 10 blocks, sync the metagraph.
     if sub.block % 10 == 0:
         meta.sync(subtensor = sub, )
