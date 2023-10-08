@@ -27,7 +27,7 @@ from protocol import TextToImage, validate_synapse, ValidatorSettings
 # Load the config.
 parser = argparse.ArgumentParser()
 parser.add_argument( '--netuid', type = int, default = 5 )
-parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://finney.opentensor.ai')
+parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://entrypoint-finney.opentensor.ai')
 parser.add_argument('--subtensor._mock', type=bool, default=False)
 parser.add_argument('--validator.allow_nsfw', type=bool, default=False)
 parser.add_argument('--validator.save_dir', type=str, default='./images')
