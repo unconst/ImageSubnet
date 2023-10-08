@@ -35,6 +35,7 @@ parser.add_argument('--validator.save_images', type=bool, default=False)
 parser.add_argument('--validator.use_absolute_size', type=bool, default=False) # Set to True if you want to 100% match the input size, else just match the aspect ratio
 parser.add_argument('--validator.label_images', type=bool, default=False, help="if true, label images with dendrite uid and score")
 parser.add_argument('--device', type=str, default='cuda')
+parser.add_argument('--axon.port', type=int, default=3000)
 bt.wallet.add_args( parser )
 bt.subtensor.add_args( parser )
 config = bt.config( parser )
