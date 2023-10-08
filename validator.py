@@ -230,7 +230,7 @@ def get_resolution(size_index = None, aspect_ratio_index = None):
 # Init the validator weights.
 alpha = 0.01
 # weights = torch.rand_like( meta.uids, dtype = torch.float32 )
-weights = torch.ones_like( meta.uids , dtype = torch.float32 ) * 0.5
+weights = torch.ones_like( meta.uids , dtype = torch.float32 )
 
 # multiply weights by the active tensor
 curr_block = sub.block
@@ -242,7 +242,7 @@ weights = weights * meta.last_update > curr_block - 600
 weights = weights * (meta.total_stake < 1.024e3) 
 
 # set all nodes without ips set to 0
-weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids])
+weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
 
  # Amount of images
 num_images = 1
