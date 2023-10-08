@@ -293,7 +293,7 @@ while True:
             # set the weight of that uid to 1.0
             uid = None
             for axon in meta.axons:
-                if axon.hotkey == wallet.hotkey:
+                if axon.hotkey == wallet.hotkey.ss58_address:
                     uid = axon.uid
                     break
             if uid is not None:
