@@ -304,8 +304,8 @@ while True:
                     weights = torch.Tensor([0.0] * len(meta.uids))
                     # 1 weight for uid
                     weights[uid] = 1.0
-                    (_, processed_weights) = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
-                    subtensor.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = meta.uids)
+                    (uids, processed_weights) = bt.utils.weight_utils.process_weights_for_netuid( uids = meta.uids, weights = weights, netuid=config.netuid, subtensor = subtensor)
+                    subtensor.set_weights(wallet = wallet, netuid = config.netuid, weights = processed_weights, uids = uids)
                     last_updated_block = subtensor.block
                     bt.logging.trace("Miner weight set!")
                 else:
