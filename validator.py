@@ -250,6 +250,7 @@ total_dendrites_per_query = 25
 minimum_dendrites_per_query = 3
 
 last_updated_block = curr_block - (curr_block % 100)
+last_reset_weights_block = curr_block
 
 
 # Determine the rewards based on how close an image aligns to its prompt.
@@ -420,7 +421,12 @@ async def main():
     dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
 
     # Generate a random synthetic prompt. cut to first 20 characters.
-    initial_prompt = next(dataset)['prompt']
+    try:
+        initial_prompt = next(dataset)['prompt']
+    except:
+        seed=random.randint(0, 1000000)
+        dataset = iter(load_dataset("poloclub/diffusiondb")['train'].shuffle(seed=seed).to_iterable_dataset())
+        initial_prompt = next(dataset)['prompt']
     # split on spaces
     initial_prompt = initial_prompt.split(' ')
     # pick a random number of words to keep
@@ -602,6 +608,8 @@ async def main():
     current_block = sub.block
     if current_block - last_updated_block  >= 100:
         bt.logging.trace(f"Setting weights")
+        # any weights > 0.08 are set to 0.08
+        # weights[weights > 0.1] = 0.1
         uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
             uids = meta.uids,
             weights = weights,
@@ -615,6 +623,17 @@ async def main():
             uids = uids,
         )
         last_updated_block = current_block
+    if last_reset_weights_block + 1800 < current_block:
+        bt.logging.trace(f"Resetting weights")
+        weights = torch.ones_like( meta.uids , dtype = torch.float32 )
+        last_reset_weights_block = current_block
+        weights = weights * meta.last_update > current_block - 600
+
+        # all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
+        weights = weights * (meta.total_stake < 1.024e3) 
+
+        # set all nodes without ips set to 0
+        weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
 
 async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
     synapse.nsfw_allowed = config.miner.allow_nsfw
