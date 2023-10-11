@@ -42,6 +42,14 @@ from typing import Tuple, Union
 bt.debug()
 bt.trace()
 
+# load version from VERSION file
+with open(os.path.join(project_root, "VERSION")) as f:
+    __version__ = f.read().strip()
+    # convert to list of ints
+    __version__ = [int(v) for v in __version__.split(".")]
+    bt.logging.trace(f"ImageNet v{__version__}")
+
+
 from config import config
 
 from utils import StableDiffusionSafetyChecker
@@ -50,6 +58,9 @@ import torchvision.transforms as transforms
 from protocol import TextToImage, ImageToImage, validate_synapse, MinerSettings
 
 from generate import t2i, i2i
+
+
+
 
 subtensor = bt.subtensor( config.subtensor.chain_endpoint, config=config )
 meta = subtensor.metagraph( config.netuid )
@@ -72,7 +83,7 @@ if config.miner.allow_nsfw:
 
 
 def CheckNSFW(output, synapse):
-    if not config.miner.allow_nsfw or not synapse.allow_nsfw:
+    if not config.miner.allow_nsfw or not synapse.nsfw_allowed:
         print(output.images, "output images")
         clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( DEVICE )
         images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( DEVICE ))
