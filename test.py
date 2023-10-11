@@ -13,7 +13,8 @@ bt.trace()
 
 
 # metagraph
-metagraph = bt.metagraph(64, network="test")
+metagraph = bt.metagraph(5, network="finney")
+metagraph.sync()
 axons = metagraph.axons
 
 myaxonid = -1 # set this to be your axon id
@@ -45,9 +46,19 @@ async def query_async(call_single_uid):
 
 x = asyncio.run(query_async(call_single_uid))
 
+_img = None
+
 for image in x[0].images:
     # Convert the raw tensor from the Synapse into a PIL image and display it.
     transforms.ToPILImage()( bt.Tensor.deserialize(image) ).show()
+    if(_img is None):
+        _img = image
+
+if(_img is None):
+    bt.logging.warning("No image found")
+    exit()
+
+
 def i2i(t2i: TextToImage, **kwargs) -> ImageToImage:
     params = {
         'text': t2i.text,
@@ -60,6 +71,8 @@ def i2i(t2i: TextToImage, **kwargs) -> ImageToImage:
     
     # Update the parameters with the provided kwargs
     params.update(kwargs)
+
+    print(params)
 
     query = ImageToImage(**params)
 
@@ -79,6 +92,6 @@ def show_images(i2i_result: ImageToImage) -> None:
         # Convert the raw tensor from the Synapse into a PIL image and display it.
         transforms.ToPILImage()( bt.Tensor.deserialize(image) ).show()
 
-show_images(i2i(query, image=image, similarity="high", text="an (anime:1.2) woman walking on a path in an autumn forest"))
-show_images(i2i(query, image=image, similarity="medium", text="an (anime:1.2) woman walking on a path in an autumn forest"))
-show_images(i2i(query, image=image, similarity="low", text="an (anime:1.2) woman walking on a path in an autumn forest"))
+show_images(i2i(query, image=_img, similarity="high", text="an (anime:1.2) woman walking on a path in an autumn forest"))
+show_images(i2i(query, image=_img, similarity="medium", text="an (anime:1.2) woman walking on a path in an autumn forest"))
+show_images(i2i(query, image=_img, similarity="low", text="an (anime:1.2) woman walking on a path in an autumn forest"))
