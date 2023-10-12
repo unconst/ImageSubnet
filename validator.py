@@ -374,10 +374,10 @@ async def main():
     # every 10 blocks, sync the metagraph.
     if sub.block % 10 == 0:
         # create old list of (uids, hotkey)
-        old_uids = list(zip(meta.uids.tolist(), meta.hotkeys.tolist()))
+        old_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
         meta.sync(subtensor = sub, )
         # create new list of (uids, hotkey)
-        new_uids = list(zip(meta.uids.tolist(), meta.hotkeys.tolist()))
+        new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
         # if the lists are different, reset weights for that uid
         for i in range(len(old_uids)):
             if old_uids[i] != new_uids[i]:
