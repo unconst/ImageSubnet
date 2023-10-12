@@ -296,7 +296,7 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     # calculate time to generate
     time_to_generate = time.time() - start_time
     # add time to generate to history but use the output_images length as the number of pixels
-    total_pixels_generated = sum([bt.Tensor.serialize(image).shape[1] * bt.Tensor.serialize(image).shape[2] for image in output_images])
+    total_pixels_generated = sum([transform(image).shape[1] * transform(image).shape[2] for image in output_images])
     time_to_generate_history.append([start_time, total_pixels_generated, time_to_generate])
 
     # pop all calls that are older than 15 minutes
