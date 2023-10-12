@@ -459,8 +459,8 @@ async def main():
     query = TextToImage(
         text = prompt,
         num_images_per_prompt = num_images,
-        height = width,
-        width = height,
+        height = height,
+        width = width,
         negative_prompt = "",
         nsfw_allowed=config.validator.allow_nsfw,
     )
