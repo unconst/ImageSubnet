@@ -7,6 +7,8 @@ parser.add_argument('--comfyui.address', type=str, default='127.0.0.1')
 parser.add_argument('--comfyui.port', type=int, default=8188)
 parser.add_argument('--comfyui.path', type=str, default=None)
 parser.add_argument('--miner.allow_nsfw', type=bool, default=False)
+parser.add_argument('--miner.public', type=bool, default=False) # Set to true to be queried by non validators
+parser.add_argument('--miner.min_validator_stake', type=int, default=1024) # 
 parser.add_argument('--miner.model_warning', type=bool, default=True)
 parser.add_argument('--miner.height.max', type=int, default=2048)
 parser.add_argument('--miner.height.min', type=int, default=None)

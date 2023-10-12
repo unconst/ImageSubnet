@@ -23,6 +23,12 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
 from protocol import TextToImage, validate_synapse, ValidatorSettings
+from utils import check_for_updates, __version__
+bt.logging.trace(f"ImageSubnet version: {__version__}")
+check_for_updates()
+
+
+    
 
 # Load the config.
 parser = argparse.ArgumentParser()
@@ -367,7 +373,15 @@ async def main():
     global weights, last_updated_block, last_reset_weights_block
     # every 10 blocks, sync the metagraph.
     if sub.block % 10 == 0:
+        # create old list of (uids, hotkey)
+        old_uids = list(zip(meta.uids.tolist(), meta.hotkeys.tolist()))
         meta.sync(subtensor = sub, )
+        # create new list of (uids, hotkey)
+        new_uids = list(zip(meta.uids.tolist(), meta.hotkeys.tolist()))
+        # if the lists are different, reset weights for that uid
+        for i in range(len(old_uids)):
+            if old_uids[i] != new_uids[i]:
+                weights[i] = 0.3 * torch.median( weights[weights != 0] )
 
     uids = meta.uids.tolist() 
 
@@ -376,8 +390,8 @@ async def main():
         bt.logging.trace("Adding more weights")
         size_difference = len(uids) - len(weights)
         new_weights = torch.zeros( size_difference, dtype = torch.float32 )
-        # the new weights should be 0.8 * the average of all non 0 weights
-        new_weights = new_weights + 0.8 * torch.mean( weights[weights != 0] )
+        # the new weights should be 0.3 * the median of all non 0 weights
+        new_weights = new_weights + 0.3 * torch.median( weights[weights != 0] )
         weights = torch.cat( (weights, new_weights) )
         del new_weights
 
@@ -623,6 +637,7 @@ async def main():
             uids = uids,
         )
         last_updated_block = current_block
+        check_for_updates()
     if last_reset_weights_block + 1800 < current_block:
         bt.logging.trace(f"Resetting weights")
         weights = torch.ones_like( meta.uids , dtype = torch.float32 )
@@ -636,6 +651,7 @@ async def main():
         weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
 
 async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
+    synapse._version = __version__
     synapse.nsfw_allowed = config.miner.allow_nsfw
     return synapse
 

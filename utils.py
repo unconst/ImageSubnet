@@ -3,6 +3,10 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torchvision.transforms as transforms
+import os
+import requests
+import bittensor as bt
+import sys
 
 transform = transforms.Compose([
     transforms.PILToTensor()
@@ -13,6 +17,40 @@ def cosine_distance(image_embeds, text_embeds):
     normalized_text_embeds = nn.functional.normalize(text_embeds)
     return torch.mm(normalized_image_embeds, normalized_text_embeds.t())
 
+# load version from VERSION file
+with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "VERSION")) as f:
+    __version__ = f.read().strip()
+    # convert to list of ints
+    __version__ = [int(v) for v in __version__.split(".")]
+
+def check_for_updates():
+    # check https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION
+    # for latest version number
+    try:
+        response = requests.get(
+            "https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION"
+        )
+        response.raise_for_status()
+        latest_version = response.text.strip()
+        latest_version = [int(v) for v in latest_version.split(".")]
+        if latest_version > __version__:
+            bt.logging.trace("A newer version of ImageSubnet is available. Downloading...")
+            # download latest version with git pull
+            os.system("git pull")
+            # checking local VERSION
+            with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "VERSION")) as f:
+                new__version__ = f.read().strip()
+                # convert to list of ints
+                new__version__ = [int(v) for v in new__version__.split(".")]
+                if new__version__ == latest_version:
+                    bt.logging.trace("ImageSubnet updated successfully.")
+                    bt.logging.trace("Restarting...")
+                    bt.logging.trace(f"Running: {sys.executable} {sys.argv}")
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                else:
+                    bt.logging.error("ImageSubnet git pull failed you will need to manually update and restart for latest code.")
+    except Exception as e:
+        bt.logging.error("Failed to check for updates: {}".format(e))
 
 class StableDiffusionSafetyChecker(PreTrainedModel):
     config_class = CLIPConfig

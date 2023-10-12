@@ -20,6 +20,7 @@
 # Confirm minimum python version
 import sys
 import os 
+import time
 
 # Get the current script's directory (assuming miner.py is in the miners folder)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -42,13 +43,9 @@ from typing import Tuple, Union
 bt.debug()
 bt.trace()
 
-# load version from VERSION file
-with open(os.path.join(project_root, "VERSION")) as f:
-    __version__ = f.read().strip()
-    # convert to list of ints
-    __version__ = [int(v) for v in __version__.split(".")]
-    bt.logging.trace(f"ImageNet v{__version__}")
-
+from utils import check_for_updates, __version__
+bt.logging.trace(f"ImageSubnet version: {__version__}")
+check_for_updates()
 
 from config import config
 
@@ -162,9 +159,100 @@ def GenerateImage(synapse, generator):
     
     return Images(output_images)
 
+usage_history = {} # keys will be uid, value will be list with timestamp and output size requested (in pixels)
+time_to_generate_history = [] # array of tuples (timestamp, pixels, time to generate)
+
+# whichever one of these is reached first will trigger the rate limit check of % pixels in last 5 minutes
+minimum_calls_per_5_minutes = 2 # minimum number of calls before rate limit
+minimum_pixels_per_5_minutes = (1024 * 1024 * 2) # minimum number of pixels before rate limit
+
+
+def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
+    # check if hotkey of synapse is in meta. and if so get its position in the array
+    uid = None
+    axon = None
+    for _uid, _axon in enumerate(meta.axons):
+        if _axon.hotkey == synapse.hotkey:
+            uid = _uid
+            axon = _axon
+            break
+    # check the stake
+    tao = meta.neurons[uid].stake.tao
+    if tao < config.miner.min_validator_stake:
+        return True, f"stake is less than min_validator_stake ({config.miner.min_validator_stake})"
+    
+    # Ensure that the ip of the synapse call matches that of the axon for the validator
+    if axon.ip != synapse.axon.ip:
+        # if 0.0.0.0
+        if axon.ip == "0.0.0.0":
+            return True, "Validator has not set their ip address on the network yet, please set and try again"
+        return True, f"ip of synapse call does not match ip of validator"
+
+    return False, ""
+
+def base_priority(synapse: TextToImage) -> float:
+    uid = None
+    for _uid, _axon in enumerate(meta.axons):
+        if _axon.hotkey == synapse.hotkey:
+            uid = _uid
+            break
+    # get all neurons which have a stake higher than the min_validator_stake and be sure to include their uid position in the array (respond with tuple, of uid and neuron)
+    vali_neurons = [(neuron.hotkey, neuron) for neuron in meta.neurons if neuron.stake.tao >= config.miner.min_validator_stake]
+
+    # get total stake of all neurons
+    total_stake = sum([neuron.stake.tao for neuron in meta.neurons])
+
+    # get percentage of stake for each neuron and add to vali_neuron tuple to be (uid, neuron, percentage)
+    vali_neurons = [(uid, neuron, neuron.stake.tao / total_stake) for uid, neuron in vali_neurons]
+    
+    # Get pixel output request of synapse
+    total_pixels = synapse.height * synapse.width * synapse.num_images_per_prompt
+    
+    # check if the uid is in the usage_history
+    if synapse.hotkey in usage_history:
+        # add the total pixels to the list of calls by that uid
+        usage_history[synapse.hotkey ].append([time.time(), total_pixels])
+    # if the uid is not in the usage_history, add it
+    else:
+        usage_history[synapse.hotkey] = [time.time(), total_pixels]
+
+    # pop all calls that are older than 5 minutes
+    for key in list(usage_history.keys()):
+        if usage_history[key][0] < time.time() - 300:
+            usage_history.pop(key)
+
+    # check minimum calls per 5 minutes and minimum pixels per 5 minutes if both arent reached we can return false and skip the next step
+    if len(usage_history) < minimum_calls_per_5_minutes:
+        if sum([call[1] for calls in usage_history.values() for call in calls]) < minimum_pixels_per_5_minutes:
+            return 100 + (meta.neurons[uid].stake.tao ** 0.5)
+
+
+    # create new array frm vali_neurons in which all percentages of stake are set to 0 if the validator has not queried the miner yet then normalize the percentages
+    normalized_vali_neurons = [(uid, neuron, percentage if uid in usage_history else 0) for uid, neuron, percentage in vali_neurons]
+    # normalize the percentages
+    normalized_vali_neurons = [(uid, neuron, percentage / sum([neuron[2] for neuron in normalized_vali_neurons])) for uid, neuron, percentage in normalized_vali_neurons]
+
+    
+    # get the total pixels requested by all uids in the last 5 minutes
+    total_pixels_requested = sum([sum([call[1] for call in calls]) for calls in usage_history.values()])
+
+    # get the percentage of pixels requested by each uid in the last 5 minutes
+    pixels_requested_percentages = {uid: sum([call[1] for call in calls]) / total_pixels_requested for uid, calls in usage_history.items()}
+
+    # now check if the uid is requesting more than their percentage of pixels
+    if synapse.hotkey in pixels_requested_percentages:
+        if pixels_requested_percentages[synapse.hotkey] > normalized_vali_neurons[synapse.hotkey][2]:
+            return 0
+    
+    # else return 100 + sqrt of stake
+    return 100 + (meta.neurons[uid].stake.tao ** 0.5)
+
+
 async def forward_t2i( synapse: TextToImage ) -> TextToImage:
 
     bt.logging.trace("Inside forward function")
+
+    start_time = time.time()
 
     seed = synapse.seed
 
@@ -205,9 +293,40 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     if not valid:
         raise ValueError(f"Invalid synapse: {error}")
 
+    # calculate time to generate
+    time_to_generate = time.time() - start_time
+    # add time to generate to history but use the output_images length as the number of pixels
+    total_pixels_generated = sum([image.shape[1] * image.shape[2] for image in output_images])
+    time_to_generate_history.append([start_time, total_pixels_generated, time_to_generate])
+
+    # pop all calls that are older than 15 minutes
+    for call in time_to_generate_history:
+        if call[0] < time.time() - 900:
+            time_to_generate_history.pop(0)
+    
+    
+    if torch.rand(1) < 0.1 and len(time_to_generate_history) > 0:
+        # log out average time to generate a 512x512 image and 1024x1024 image
+        time_512 = get_estimated_time_to_generate_image(512,512)
+        time_1024 = get_estimated_time_to_generate_image(512,512)
+        # have a random chance of logging 10% of calls
+        bt.logging.trace(f"In the last 15m the average time to generate a 512x512 image took {time_512}s and a 1024x1024 image took {time_1024}s")
+
     return synapse
 
+def get_estimated_time_to_generate_image(width, height):
+    time_to_generate_pixel = get_time_to_generate_pixel()
+    time_to_generate = time_to_generate_pixel * width * height
+    return time_to_generate
+
+def get_time_to_generate_pixel():
+    time_to_generate_pixel = sum([call[2] for call in time_to_generate_history]) / sum([call[1] for call in time_to_generate_history])
+    return time_to_generate_pixel
+
 def blacklist_t2i( synapse: TextToImage ) -> Tuple[bool, str]:
+    b = base_blacklist(synapse)
+    if b[0]:
+        return b
     return False, ""
 
 def priority_t2i( synapse: TextToImage ) -> float:
@@ -259,6 +378,9 @@ async def forward_i2i( synapse: ImageToImage ) -> ImageToImage:
 
 
 def blacklist_i2i( synapse: ImageToImage ) -> Tuple[bool, str]:
+    b = base_blacklist(synapse)
+    if b[0]:
+        return b
     return False, ""
 
 def priority_i2i( synapse: ImageToImage ) -> float:
@@ -268,6 +390,8 @@ def verify_i2i( synapse: ImageToImage ) -> None:
     pass
 
 async def forward_settings( synapse: MinerSettings ) -> MinerSettings:
+    synapse.is_public = config.miner.public
+    synapse.min_validator_stake = config.miner.min_validator_stake
     synapse.nsfw_allowed = config.miner.allow_nsfw
     synapse.max_images = config.miner.max_images
     synapse.max_pixels = config.miner.max_pixels
@@ -324,7 +448,7 @@ while True:
             except Exception as e:
                 bt.logging.warning(f"Could not set miner weight: {e}")
                 raise e
-                # pass
+            check_for_updates()
         sleep(1)
     # except KeyboardInterrupt:
         # continue
