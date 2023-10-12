@@ -172,7 +172,7 @@ def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
     uid = None
     axon = None
     for _uid, _axon in enumerate(meta.axons):
-        if _axon.hotkey == synapse.hotkey:
+        if _axon.hotkey == synapse.dendrite.hotkey:
             uid = _uid
             axon = _axon
             break
@@ -193,7 +193,7 @@ def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
 def base_priority(synapse: TextToImage) -> float:
     uid = None
     for _uid, _axon in enumerate(meta.axons):
-        if _axon.hotkey == synapse.hotkey:
+        if _axon.hotkey == synapse.dendrite.hotkey:
             uid = _uid
             break
     # get all neurons which have a stake higher than the min_validator_stake and be sure to include their uid position in the array (respond with tuple, of uid and neuron)
@@ -209,12 +209,12 @@ def base_priority(synapse: TextToImage) -> float:
     total_pixels = synapse.height * synapse.width * synapse.num_images_per_prompt
     
     # check if the uid is in the usage_history
-    if synapse.hotkey in usage_history:
+    if synapse.dendrite.hotkey in usage_history:
         # add the total pixels to the list of calls by that uid
-        usage_history[synapse.hotkey ].append([time.time(), total_pixels])
+        usage_history[synapse.dendrite.hotkey ].append([time.time(), total_pixels])
     # if the uid is not in the usage_history, add it
     else:
-        usage_history[synapse.hotkey] = [time.time(), total_pixels]
+        usage_history[synapse.dendrite.hotkey] = [time.time(), total_pixels]
 
     # pop all calls that are older than 5 minutes
     for key in list(usage_history.keys()):
@@ -240,8 +240,8 @@ def base_priority(synapse: TextToImage) -> float:
     pixels_requested_percentages = {uid: sum([call[1] for call in calls]) / total_pixels_requested for uid, calls in usage_history.items()}
 
     # now check if the uid is requesting more than their percentage of pixels
-    if synapse.hotkey in pixels_requested_percentages:
-        if pixels_requested_percentages[synapse.hotkey] > normalized_vali_neurons[synapse.hotkey][2]:
+    if synapse.dendrite.hotkey in pixels_requested_percentages:
+        if pixels_requested_percentages[synapse.dendrite.hotkey] > normalized_vali_neurons[synapse.dendrite.hotkey][2]:
             return 0
     
     # else return 100 + sqrt of stake
