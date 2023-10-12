@@ -182,7 +182,7 @@ def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
         return True, f"stake is less than min_validator_stake ({config.miner.min_validator_stake})"
     
     # Ensure that the ip of the synapse call matches that of the axon for the validator
-    if axon.ip != synapse.axon.ip:
+    if axon.ip != synapse.dendrite.ip:
         # if 0.0.0.0
         if axon.ip == "0.0.0.0":
             return True, "Validator has not set their ip address on the network yet, please set and try again"
