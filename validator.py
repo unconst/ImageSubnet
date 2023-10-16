@@ -24,7 +24,6 @@ parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
 from protocol import TextToImage, validate_synapse, ValidatorSettings
 from utils import check_for_updates, __version__
-bt.logging.trace(f"ImageSubnet version: {__version__}")
 check_for_updates()
 
 

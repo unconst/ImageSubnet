@@ -33,6 +33,8 @@ def check_for_updates():
         response.raise_for_status()
         latest_version = response.text.strip()
         latest_version = [int(v) for v in latest_version.split(".")]
+        bt.logging.trace(f"Current version: {__version__}")
+        bt.logging.trace(f"Latest version: {latest_version}")
         if latest_version > __version__:
             bt.logging.trace("A newer version of ImageSubnet is available. Downloading...")
             # download latest version with git pull
