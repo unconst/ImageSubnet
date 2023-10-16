@@ -31,7 +31,8 @@ def check_for_updates():
             "https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION"
         )
         response.raise_for_status()
-        latest_version = response.text.strip()
+        _json = response.json()
+        latest_version = _json['payload']['blob']['rawLines'][0]
         latest_version = [int(v) for v in latest_version.split(".")]
         bt.logging.trace(f"Current version: {__version__}")
         bt.logging.trace(f"Latest version: {latest_version}")
