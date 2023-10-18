@@ -127,5 +127,4 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
                 "Potential NSFW content was detected in one or more images. A black image will be returned instead."
                 " Try again with a different prompt and/or seed."
             )
-
         return images, has_nsfw_concepts
