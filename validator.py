@@ -357,16 +357,37 @@ def add_black_border(image, border_size):
 safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
 processor = CLIPImageProcessor()
 
+def select_font(preferred_fonts, desired_size):
+    """
+    Select a font for image labeling based on preferred fonts and desired size.
+    
+    Args:
+        preferred_fonts (list): List of preferred font names.
+        desired_size (int): Desired font size.
+
+    Returns:
+        ImageFont.FreeTypeFont: Selected font or default font if none is found.
+    """
+    fonts = ImageFont.get_fonts()  # Use get_fonts() to get available fonts
+
+    for pref_font in preferred_fonts:
+        for system_font in fonts:
+            if pref_font.lower() in system_font.lower():
+                try:
+                    bt.logging.trace(f"Loading font {system_font}")
+                    return ImageFont.truetype(system_font, desired_size)
+                except OSError as e:
+                    print(e)
+                    bt.logging.error(f"Font {system_font} could not be loaded.")
+                    continue
+
+    # If no suitable font is found, use the default font
+    print("Using default font. Size might not be ideal.")
+    return ImageFont.load_default()
+
 # find DejaVu Sans font
 if (config.validator.label_images == True):
-    fonts = get_system_fonts()
-    dejavu_font = None
-    for font in fonts:
-        if "DejaVu" in font:
-            dejavu_font = font
-            break 
-
-    default_font = ImageFont.truetype(dejavu_font, 30)
+    selected_font = select_font(["DejaVu Sans", "Arial", "Times New Roman", "Helvetica", "Verdana"], 30) 
 
 async def main():
     global weights, last_updated_block, last_reset_weights_block
@@ -584,11 +605,10 @@ async def main():
                     draw = ImageDraw.Draw(pil_img)
                     width = pil_img.width
                     
-                    draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=default_font)
+                    draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=selected_font)
                     # draw score in top right
-                    draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=default_font)
+                    draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=selected_font)
                     # downsize image in half
-                    # pil_img = pil_img.resize( (int(pil_img.width / 2), int(pil_img.height / 2)) )
                 all_images_and_scores.append( (pil_img, rewards[i].item()) )
 
     # if save images is true, save the images to a folder
@@ -603,7 +623,10 @@ async def main():
         draw = ImageDraw.Draw(tiled_images)
         
         # add text in the top
-        draw.text((10, 10), prompt.encode("utf-8", "ignore").decode("utf-8"), (255, 255, 255), font=default_font)
+        draw.text((10, 10), prompt.encode("utf-8", "ignore").decode("utf-8"), (255, 255, 255), font=selected_font)
+
+        # scale the image down to 50% of its size
+        tiled_images = tiled_images.resize( (int(tiled_images.width / 2), int(tiled_images.height / 2)) )
 
         # save the image
         tiled_images.save( f"images/{sub.block}.png", "PNG" )
