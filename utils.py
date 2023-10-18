@@ -31,8 +31,7 @@ def check_for_updates():
             "https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION"
         )
         response.raise_for_status()
-        _json = response.json()
-        latest_version = _json['payload']['blob']['rawLines'][0]
+        latest_version = response.text.strip()
         latest_version = [int(v) for v in latest_version.split(".")]
         bt.logging.trace(f"Current version: {__version__}")
         bt.logging.trace(f"Latest version: {latest_version}")
@@ -127,4 +126,5 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
                 "Potential NSFW content was detected in one or more images. A black image will be returned instead."
                 " Try again with a different prompt and/or seed."
             )
+            
         return images, has_nsfw_concepts
