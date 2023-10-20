@@ -1,5 +1,5 @@
 # This Document is brought to you by TaoBard,
-It was been awhile since my last document, but in the efforts of evening the playing ground and allowing everybody to understand exactly what's occuring with this subnet, I have taken it upon myself to publish a set of simple instructions that almost anybody can follow to set up a txt2img miner on Runpod, as well as advice for the future of subnet documentation for those who may wish to contribute. 
+It's been a while since my last document, but in the efforts of evening the playing ground and allowing everybody to understand exactly what's occuring with this subnet, I have taken it upon myself to publish a set of simple instructions that almost anybody can follow to set up a txt2img miner on Runpod, as well as advice for the future of subnet documentation for those who may wish to contribute. 
 
 ## Runpod specifications
 ![Set your pod like this, though you could use less storage](./images/runpodsettings.png) 
