@@ -79,7 +79,7 @@ if config.miner.allow_nsfw:
 
 
 def CheckNSFW(output, synapse):
-    if not config.miner.allow_nsfw or not synapse.nsfw_allowed:
+    if not config.miner.allow_nsfw or not synapse.nsfw_allowed and len(output.images) > 0:
         print(output.images, "output images")
         clip_input = processor([transform(image) for image in output.images], return_tensors="pt").to( DEVICE )
         images, has_nsfw_concept = safetychecker.forward( images=output.images, clip_input=clip_input.pixel_values.to( DEVICE ))
@@ -262,7 +262,6 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     generator = torch.Generator(device=DEVICE).manual_seed(seed)
 
     output = GenerateImage(synapse, generator)
-    print(output.images)
 
     has_nsfw_concept = CheckNSFW(output, synapse) # will return all False if allow_nsfw is enabled
     if any(has_nsfw_concept):
@@ -307,7 +306,7 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     if torch.rand(1) < 0.1 and len(time_to_generate_history) > 0:
         # log out average time to generate a 512x512 image and 1024x1024 image
         time_512 = get_estimated_time_to_generate_image(512,512)
-        time_1024 = get_estimated_time_to_generate_image(512,512)
+        time_1024 = get_estimated_time_to_generate_image(1024,1024)
         # have a random chance of logging 10% of calls
         bt.logging.trace(f"In the last 15m the average time to generate a 512x512 image took {time_512}s and a 1024x1024 image took {time_1024}s")
 

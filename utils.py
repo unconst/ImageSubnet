@@ -26,39 +26,44 @@ with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "VERSION")) 
 def check_for_updates():
     # check https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION
     # for latest version number
-    try:
-        bt.logging.trace("Checking for updates...")
-        response = requests.get(
-            "https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION"
-        )
-        response.raise_for_status()
-        try:
-            _json = response.json()
-            latest_version = _json['payload']['blob']['rawLines'][0]
-            latest_version = [int(v) for v in latest_version.split(".")]
-            bt.logging.trace(f"Current version: {__version__}")
-            bt.logging.trace(f"Latest version: {latest_version}")
-            if latest_version > __version__:
-                bt.logging.trace("A newer version of ImageSubnet is available. Downloading...")
-                # download latest version with git pull
-                os.system("git pull")
-                # checking local VERSION
-                with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "VERSION")) as f:
-                    new__version__ = f.read().strip()
-                    # convert to list of ints
-                    new__version__ = [int(v) for v in new__version__.split(".")]
-                    if new__version__ == latest_version:
-                        bt.logging.trace("ImageSubnet updated successfully.")
-                        bt.logging.trace("Restarting...")
-                        bt.logging.trace(f"Running: {sys.executable} {sys.argv}")
-                        os.execv(sys.executable, [sys.executable] + sys.argv)
-                    else:
-                        bt.logging.error("ImageSubnet git pull failed you will need to manually update and restart for latest code.")
-        except Exception as e:
-            bt.logging.error("Failed to convert response to json: {}".format(e))
-            bt.logging.trace("Response: {}".format(response.text))            
-    except Exception as e:
-        bt.logging.error("Failed to check for updates: {}".format(e))
+
+    # disabled for now, seeming to cause issues with some users
+    return
+
+
+    # try:
+    #     bt.logging.trace("Checking for updates...")
+    #     response = requests.get(
+    #         "https://raw.githubusercontent.com/unconst/ImageSubnet/main/VERSION"
+    #     )
+    #     response.raise_for_status()
+    #     try:
+    #         _json = response.json()
+    #         latest_version = _json['payload']['blob']['rawLines'][0]
+    #         latest_version = [int(v) for v in latest_version.split(".")]
+    #         bt.logging.trace(f"Current version: {__version__}")
+    #         bt.logging.trace(f"Latest version: {latest_version}")
+    #         if latest_version > __version__:
+    #             bt.logging.trace("A newer version of ImageSubnet is available. Downloading...")
+    #             # download latest version with git pull
+    #             os.system("git pull")
+    #             # checking local VERSION
+    #             with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "VERSION")) as f:
+    #                 new__version__ = f.read().strip()
+    #                 # convert to list of ints
+    #                 new__version__ = [int(v) for v in new__version__.split(".")]
+    #                 if new__version__ == latest_version:
+    #                     bt.logging.trace("ImageSubnet updated successfully.")
+    #                     bt.logging.trace("Restarting...")
+    #                     bt.logging.trace(f"Running: {sys.executable} {sys.argv}")
+    #                     os.execv(sys.executable, [sys.executable] + sys.argv)
+    #                 else:
+    #                     bt.logging.error("ImageSubnet git pull failed you will need to manually update and restart for latest code.")
+    #     except Exception as e:
+    #         bt.logging.error("Failed to convert response to json: {}".format(e))
+    #         bt.logging.trace("Response: {}".format(response.text))            
+    # except Exception as e:
+    #     bt.logging.error("Failed to check for updates: {}".format(e))
 
 class StableDiffusionSafetyChecker(PreTrainedModel):
     config_class = CLIPConfig
