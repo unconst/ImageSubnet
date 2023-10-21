@@ -306,6 +306,9 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
         
         # Get the average weight for the uid from _weights.
         init_scores[i] = torch.mean( img_scores )
+        #  if score is < 0, set it to 0
+        if init_scores[i] < 0:
+            init_scores[i] = 0
         
     # if sum is 0 then return empty vector
     if torch.sum( init_scores ) == 0:
@@ -535,7 +538,7 @@ async def main():
 
     # Calculate the final rewards.
     dissimilarity_weight = 0.15
-    rewards = (1 - dissimilarity_weight) * rewards + dissimilarity_weight * dissimilarity_rewards    
+    rewards = (1 - dissimilarity_weight) * (rewards + (dissimilarity_weight * dissimilarity_rewards))    
     bt.logging.trace("Rewards:")
     bt.logging.trace(rewards)
     
@@ -622,6 +625,15 @@ async def main():
 
         # Normalize weights.
         weights = weights / torch.sum( weights )
+
+        # TODO POTENTIALLY ADD THIS IN LATER
+        # any weights higher than (1 / len(weights)) * 10 are set to (1 / len(weights)) * 10
+        # scale_max = (1 / len(weights)) * (len(weights) * 0.0390625)
+        # weights[weights > scale_max] = scale_max 
+
+        # # normalize again
+        # weights = weights / torch.sum( weights )
+
         bt.logging.trace("Weights:")
         bt.logging.trace(weights)
 
