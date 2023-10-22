@@ -58,7 +58,7 @@ if not os.path.exists(config.validator.save_dir) and config.validator.save_image
 wallet = bt.wallet( config = config )
 sub = bt.subtensor( config = config )
 meta = sub.metagraph( config.netuid )
-meta.sync()
+meta.sync( subtensor = sub )
 dend = bt.dendrite( wallet = wallet )
 
 import torchvision.models as models
