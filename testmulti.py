@@ -188,7 +188,14 @@ async def query_async(call_single_uid):
             try:
                 for image in i2i_responses[j].images:
                     # Convert the raw tensor from the Synapse into a PIL image and display it.
-                    _imgs.append(transforms.ToPILImage()( bt.Tensor.deserialize(image) ))
+                    __img = transforms.ToPILImage()( bt.Tensor.deserialize(image) )
+
+                    # ensure that image matches query width height, if not dont add to _imgs
+                    if(__img.size[0] == query.width and __img.size[1] == query.height):
+                        _imgs.append(__img)
+                    else:
+                        bt.logging.error(f"UID: {dendrites_to_query[j]} image size does not match query size {__img.size} != {query.width}x{query.height}")
+                    
                 if(len(i2i_responses[j].images) > 0):
                     print("success in i2i" + str(j))
             except Exception as e:
