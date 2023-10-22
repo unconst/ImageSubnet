@@ -421,7 +421,7 @@ bt.logging.trace('Miner running. ^C to exit.')
 while True:
     # if subtensor block is different than meta.block by 10, update the miner weight
     if subtensor.block - 10 >= meta.block:
-        meta.sync()
+        meta.sync( subtensor = subtensor )
     if subtensor.block - last_updated_block >= 100:
         bt.logging.trace(f"Setting miner weight")
         # find the uid that matches config.wallet.hotkey [meta.axons[N].hotkey == config.wallet.hotkey]
