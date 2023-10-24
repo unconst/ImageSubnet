@@ -175,6 +175,11 @@ def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
             uid = _uid
             axon = _axon
             break
+
+    # if uid is None, then the hotkey of the synapse is not in the meta.axons array
+    if uid is None:
+        return True, "hotkey of synapse is not in meta.axons array"
+    
     # check the stake
     tao = meta.neurons[uid].stake.tao
     if tao < config.miner.min_validator_stake:
