@@ -23,7 +23,7 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
 from protocol import TextToImage, validate_synapse, ValidatorSettings
-from utils import check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
+from utils import get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
 check_for_updates()
 
 
@@ -66,13 +66,16 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils import StableDiffusionSafetyChecker, DEVICE
+from utils import StableDiffusionSafetyChecker
 from transformers import CLIPImageProcessor
 from fabric.utils import get_free_gpu, tile_images
 import matplotlib.font_manager as fm
 
+DEVICE = get_device(config)
+
 # For image to text generation.
 # Load the scoring model
+scoring_model = get_scoring_model(config)
 
 # Load prompt dataset.
 from datasets import load_dataset

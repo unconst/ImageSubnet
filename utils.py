@@ -24,7 +24,8 @@ transform = transforms.Compose([
     transforms.PILToTensor()
 ])
 
-DEVICE = torch.device(config.device if torch.cuda.is_available() else "cpu")
+def get_device(_config: bt.config):
+    return torch.device(config.device if torch.cuda.is_available() else "cpu")
 
  # Amount of images
 num_images = 1
@@ -32,7 +33,9 @@ total_dendrites_per_query = 25
 minimum_dendrites_per_query = 3
 
 import ImageReward as RM
-scoring_model = RM.load("ImageReward-v1.0", device=DEVICE)
+def get_scoring_model(_config: bt.config = config):
+    return RM.load("ImageReward-v1.0", device=_config.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
 
 def cosine_distance(image_embeds, text_embeds):
     normalized_image_embeds = nn.functional.normalize(image_embeds)
