@@ -27,7 +27,7 @@ transform = transforms.Compose([
 def get_device(_config: bt.config):
     return torch.device(_config.device if config else "cuda" if torch.cuda.is_available() else "cpu")
 
-DEVICE = get_device(dict({"device": "cuda"}))
+DEVICE = get_device()
 
  # Amount of images
 num_images = 1
