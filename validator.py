@@ -23,7 +23,7 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
 from protocol import TextToImage, validate_synapse, ValidatorSettings
-from utils import check_for_updates, __version__
+from utils import check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
 check_for_updates()
 
 
@@ -61,132 +61,18 @@ meta = sub.metagraph( config.netuid )
 meta.sync( subtensor = sub )
 dend = bt.dendrite( wallet = wallet )
 
-import torchvision.models as models
+
 import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils import StableDiffusionSafetyChecker
+from utils import StableDiffusionSafetyChecker, DEVICE
 from transformers import CLIPImageProcessor
 from fabric.utils import get_free_gpu, tile_images
 import matplotlib.font_manager as fm
 
-
-DEVICE = torch.device(config.device if torch.cuda.is_available() else "cpu")
-
-def get_system_fonts():
-    font_list = fm.findSystemFonts(fontpaths=None, fontext='ttf')
-    return font_list
-
-def load_and_preprocess_image_array(image_array, target_size):
-    image_transform = transforms.Compose([
-        transforms.Resize(target_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
-
-    preprocessed_images = []
-    for image in image_array:
-        if(image is None):
-            preprocessed_images.append(None)
-            continue
-        image = image_transform(image).unsqueeze(0)
-        preprocessed_images.append(image)
-
-    return torch.cat(preprocessed_images, dim=0)
-
-def extract_style_vectors(image_array, target_size=(224, 224)):
-    _model = models.vgg19(pretrained=True).features.to(DEVICE)
-    _model = nn.Sequential(*list(_model.children())[:35])
-
-    images = load_and_preprocess_image_array(image_array, target_size).to(DEVICE)
-    
-    with torch.no_grad():
-        style_vectors = _model(images)
-    style_vectors = style_vectors.view(style_vectors.size(0), -1)
-    return style_vectors
-
-def cosine_similarity(vector1, vector2):
-    dot_product = torch.dot(vector1, vector2)
-    magnitude1 = torch.norm(vector1)
-    magnitude2 = torch.norm(vector2)
-    similarity = dot_product / (magnitude1 * magnitude2)
-    return similarity.item()
-
-def compare_to_set(image_array, target_size=(224, 224)):
-    # convert image array to index, image tuple pairs
-    image_array = [(i, image) for i, image in enumerate(image_array)]
-
-    # if there are no images, return an empty matrix
-    if len(image_array) == 0:
-        return []
-
-    # only process images that are not None
-    style_vectors = extract_style_vectors([image for _, image in image_array if image is not None], target_size)
-    # add back in the None images as zero vectors
-    for i, image in image_array:
-        if image is None:
-            # style_vectors = torch.cat((style_vectors[:i], torch.zeros(1, style_vectors.size(1)), style_vectors[i:]))
-            # Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu! (when checking argument for argument tensors in method wrapper_CUDA_cat)
-            # Fixed version:
-            style_vectors = torch.cat((style_vectors[:i], torch.zeros(1, style_vectors.size(1)).to(style_vectors.device), style_vectors[i:]))
-
-    similarity_matrix = torch.zeros(len(image_array), len(image_array))
-    for i in range(style_vectors.size(0)):
-        for j in range(style_vectors.size(0)):
-            if image_array[i] is not None and image_array[j] is not None:
-                similarity = cosine_similarity(style_vectors[i], style_vectors[j])
-                likeness = 1.0 - similarity  # Invert the likeness to get dissimilarity
-                likeness = min(1,max(0, likeness))  # Clip the likeness to [0,1]
-                if likeness < 0.01:
-                    likeness = 0
-                similarity_matrix[i][j] = likeness
-
-    return similarity_matrix.tolist()
-
-def calculate_mean_dissimilarity(dissimilarity_matrix):
-    num_images = len(dissimilarity_matrix)
-    mean_dissimilarities = []
-
-    for i in range(num_images):
-        dissimilarity_values = [dissimilarity_matrix[i][j] for j in range(num_images) if i != j]
-        # error: list index out of range
-        if len(dissimilarity_values) == 0 or sum(dissimilarity_values) == 0:
-            mean_dissimilarities.append(0)
-            continue
-        # divide by amount of non zero values
-        non_zero_values = [value for value in dissimilarity_values if value != 0]
-        mean_dissimilarity = sum(dissimilarity_values) / len(non_zero_values)
-        mean_dissimilarities.append(mean_dissimilarity)
-
-     # Min-max normalization
-    non_zero_values = [value for value in mean_dissimilarities if value != 0]
-
-    if(len(non_zero_values) == 0):
-        return [0.5] * num_images
-
-    min_value = min(non_zero_values)
-    max_value = max(mean_dissimilarities)
-    range_value = max_value - min_value
-    if range_value != 0:
-        mean_dissimilarities = [(value - min_value) / range_value for value in mean_dissimilarities]
-    else:
-        # All elements are the same (no range), set all values to 0.5
-        mean_dissimilarities = [0.5] * num_images
-    # clamp to [0,1]
-    mean_dissimilarities = [min(1,max(0, value)) for value in mean_dissimilarities]
-
-    # Ensure sum of values is 1 (normalize)
-    # sum_values = sum(mean_dissimilarities)
-    # if sum_values != 0:
-    #     mean_dissimilarities = [value / sum_values for value in mean_dissimilarities]
-
-    return mean_dissimilarities
-
 # For image to text generation.
 # Load the scoring model
-import ImageReward as RM
-scoring_model = RM.load("ImageReward-v1.0", device=DEVICE)
 
 # Load prompt dataset.
 from datasets import load_dataset
@@ -202,7 +88,7 @@ prompt_generation_pipe = pipeline("text-generation", model="succinctly/text2imag
 dendrite_pool = AsyncDendritePool( wallet = wallet, metagraph = meta )
 
 # list of sizes
-sizes = [512, 768, 1024, 1536]
+sizes = [512, 768, 1024, 1280]
 
 # list of aspect ratios [(1, 1), (4, 3), (16, 9)]
 aspect_ratios = [(1, 1), (4, 3), (3, 4), (16, 9), (9, 16)]
@@ -211,6 +97,8 @@ def get_resolution(size_index = None, aspect_ratio_index = None):
     # pick a random size and aspect ratio
     if size_index is None or size_index >= len(sizes):
         size_index = random.randint(0, len(sizes)-1)
+    if size_index == 0 and aspect_ratio_index is None:
+        aspect_ratio_index = 0
     if aspect_ratio_index is None or aspect_ratio_index >= len(aspect_ratios):
         aspect_ratio_index = random.randint(0, len(aspect_ratios)-1)
     
@@ -249,101 +137,9 @@ weights = weights * (meta.total_stake < 1.024e3)
 # set all nodes without ips set to 0
 weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
 
- # Amount of images
-num_images = 1
-total_dendrites_per_query = 25
-minimum_dendrites_per_query = 3
-
 last_updated_block = curr_block - (curr_block % 100)
 last_reset_weights_block = curr_block
 
-
-# Determine the rewards based on how close an image aligns to its prompt.
-def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ TextToImage ]) -> (torch.FloatTensor, List[ Image.Image ]):
-
-    # Takes the original query and a list of responses, returns a tensor of rewards equal to the length of the responses.
-    init_scores = torch.zeros( len(responses), dtype = torch.float32 )
-    top_images = []
-
-    print("Calculating rewards for prompt alignment")
-    print(f"Query: {query.text}")
-    print(f"Responses: {len(responses)}")
-
-    for i, response in enumerate(responses):
-        print(response, type(response))
-
-        # if theres no images, skip this response.
-        if len(response.images) == 0:
-            top_images.append(None)
-            continue
-
-        img_scores = torch.zeros( num_images, dtype = torch.float32 )
-        try:
-            with torch.no_grad():
-
-                images = []
-
-                for j, tensor_image in enumerate(response.images):
-                    # Lets get the image.
-                    image = transforms.ToPILImage()( bt.Tensor.deserialize(tensor_image) )
-
-                    images.append(image)
-                
-                ranking, scores = scoring_model.inference_rank(query.text, images)
-                img_scores = torch.tensor(scores)
-                # push top image to images (i, image)
-                if len(images) > 1:
-                    top_images.append(images[ranking[0]-1])
-                else:
-                    top_images.append(images[0])
-        except Exception as e:
-            print(e)
-            print("error in " + str(i))
-            print(response)
-            top_images.append(None)
-            continue
-
-        
-        # Get the average weight for the uid from _weights.
-        init_scores[i] = torch.mean( img_scores )
-        #  if score is < 0, set it to 0
-        if init_scores[i] < 0:
-            init_scores[i] = 0
-        
-    # if sum is 0 then return empty vector
-    if torch.sum( init_scores ) == 0:
-        return (init_scores, top_images)
-
-    # preform exp on all values
-    init_scores = torch.exp( init_scores )
-
-    # set all values of 1 to 0
-    init_scores[init_scores == 1] = 0
-
-    # normalize the scores such that they sum to 1 but skip scores that are 0
-    init_scores = init_scores / torch.sum( init_scores )
-
-    return (init_scores, top_images)
-
-def calculate_dissimilarity_rewards( images: List[ Image.Image ] ) -> torch.FloatTensor:
-    # Takes a list of images, returns a tensor of rewards equal to the length of the images.
-    init_scores = torch.zeros( len(images), dtype = torch.float32 )
-
-    # If array is all nones, return 0 vector of length len(images)
-    if all(image is None for image in images):
-        return init_scores
-
-    # Calculate the dissimilarity matrix.
-    dissimilarity_matrix = compare_to_set(images)
-
-    # Calculate the mean dissimilarity for each image.
-    mean_dissimilarities = calculate_mean_dissimilarity(dissimilarity_matrix)
-
-    # Calculate the rewards.
-    for i, image in enumerate(images):
-        init_scores[i] = mean_dissimilarities[i]
-
-    return init_scores
 
 def add_black_border(image, border_size):
     # Create a new image with the desired dimensions
