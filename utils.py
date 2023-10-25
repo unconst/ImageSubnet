@@ -25,7 +25,7 @@ transform = transforms.Compose([
 ])
 
 def get_device(_config: bt.config = None):
-    return torch.device(_config.device if config else "cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(_config.device if (_config is not None) else "cuda" if torch.cuda.is_available() else "cpu")
 
 DEVICE = get_device()
 
@@ -36,7 +36,7 @@ minimum_dendrites_per_query = 3
 
 import ImageReward as RM
 def get_scoring_model(_config: bt.config = None ):
-    return RM.load("ImageReward-v1.0", device=_config.device if config else ("cuda" if torch.cuda.is_available() else "cpu"))
+    return RM.load("ImageReward-v1.0", device=_config.device if (_config is not None) else ("cuda" if torch.cuda.is_available() else "cpu"))
 
 scoring_model = get_scoring_model(config)
 
