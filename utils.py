@@ -25,7 +25,7 @@ transform = transforms.Compose([
 ])
 
 def get_device(_config: bt.config):
-    return torch.device(config.device if torch.cuda.is_available() else "cpu")
+    return torch.device(_config.device if config else "cuda" if torch.cuda.is_available() else "cpu")
 
 DEVICE = get_device(dict({"device": "cuda"}))
 
