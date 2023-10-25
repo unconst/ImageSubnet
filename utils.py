@@ -27,14 +27,18 @@ transform = transforms.Compose([
 def get_device(_config: bt.config):
     return torch.device(config.device if torch.cuda.is_available() else "cpu")
 
+DEVICE = get_device(dict({"device": "cuda"}))
+
  # Amount of images
 num_images = 1
 total_dendrites_per_query = 25
 minimum_dendrites_per_query = 3
 
 import ImageReward as RM
-def get_scoring_model(_config: bt.config = config):
-    return RM.load("ImageReward-v1.0", device=_config.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+def get_scoring_model(_config: bt.config ):
+    return RM.load("ImageReward-v1.0", device=_config.device if config else ("cuda" if torch.cuda.is_available() else "cpu"))
+
+scoring_model = get_scoring_model(config)
 
 
 def cosine_distance(image_embeds, text_embeds):
@@ -136,7 +140,6 @@ class StableDiffusionSafetyChecker(PreTrainedModel):
                 concept_threshold = self.concept_embeds_weights[concept_idx].item()
                 result_img["concept_scores"][concept_idx] = round(concept_cos - (concept_threshold * adjustment), 3)
                 if result_img["concept_scores"][concept_idx] > 0:
-                    print('bad concept', concept_idx, result_img["concept_scores"][concept_idx])
                     result_img["bad_concepts"].append(concept_idx)
                     result_img['bad_score'] += result_img["concept_scores"][concept_idx]
 
@@ -171,8 +174,6 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
     top_images = []
 
     for i, response in enumerate(responses):
-        print(response, type(response))
-
         # if theres no images, skip this response.
         if len(response.images) == 0:
             top_images.append(None)
