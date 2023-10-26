@@ -534,11 +534,36 @@ async def main():
                 pass
 
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
-    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( best_images )
+    rewards = rewards / torch.max(rewards)
 
-    # Calculate the final rewards.
+    # zip rewards and images together, then filter out all images which have a reward of 0
+    zipped_rewards = list(zip(rewards, best_images))
+    filtered_rewards = list(zip(*filter(lambda x: x[0] != 0, zipped_rewards)))
+    # get back images
+    filtered_best_images = filtered_rewards[1]
+
+    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( filtered_best_images )
+
+    # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
+    new_dissimilarity_rewards = torch.zeros( len(rewards), dtype = torch.float32 )
+    y = 0
+    for i, reward in enumerate(rewards):
+        if reward != 0:
+            new_dissimilarity_rewards[i] = dissimilarity_rewards[y]
+            y+=1
+
+    dissimilarity_rewards = new_dissimilarity_rewards
+
+    dissimilarity_rewards = dissimilarity_rewards / torch.max(dissimilarity_rewards)
+
+    # my goal with dissimilarity_rewards is to encourage diversity in the images
+
+    # normalize rewards such that the highest value is 1
+
     dissimilarity_weight = 0.15
-    rewards = (1 - dissimilarity_weight) * (rewards + (dissimilarity_weight * dissimilarity_rewards))    
+    rewards = rewards + dissimilarity_weight * dissimilarity_rewards
+
+    rewards = rewards / torch.max(rewards)
     bt.logging.trace("Rewards:")
     bt.logging.trace(rewards)
     
