@@ -25,7 +25,7 @@ transform = transforms.Compose([
 ])
 
 def get_device(_config: bt.config = None):
-    return torch.device(_config.device if (_config is not None) else "cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(_config.device if (_config is not None and _config.device is not None) else "cuda" if torch.cuda.is_available() else "cpu")
 
 DEVICE = get_device()
 
@@ -36,7 +36,7 @@ minimum_dendrites_per_query = 3
 
 import ImageReward as RM
 def get_scoring_model(_config: bt.config = None ):
-    return RM.load("ImageReward-v1.0", device=_config.device if (_config is not None) else ("cuda" if torch.cuda.is_available() else "cpu"))
+    return RM.load("ImageReward-v1.0", device=_config.device if (_config is not None and _config.device is not None) else ("cuda" if torch.cuda.is_available() else "cpu"))
 
 scoring_model = get_scoring_model(config)
 
@@ -239,7 +239,7 @@ def calculate_dissimilarity_rewards( images: List[ Image.Image ] ) -> torch.Floa
     dissimilarity_matrix = compare_to_set(images)
 
     # Calculate the mean dissimilarity for each image.
-    mean_dissimilarities = calculate_mean_dissimilarity(dissimilarity_matrix)
+    mean_dissimilarities = calculate_mean_similarity(dissimilarity_matrix)
 
     # Calculate the rewards.
     for i, image in enumerate(images):
@@ -287,6 +287,13 @@ def cosine_similarity(vector1, vector2):
     return similarity.item()
 
 def compare_to_set(image_array, target_size=(224, 224)):
+
+    # FUNCTION DESCRIPTION:
+    # Calculates the dissimilarity matrix for a set of images.
+    # The dissimilarity matrix is a matrix of size (num_images, num_images) where each element is the dissimilarity between two images.
+    # The dissimilarity between two images is calculated as 1 - the cosine similarity between the style vectors of the two images.
+    # The style vector of an image is the output of the VGG19 network after the image has been passed through the first 35 layers.
+
     # convert image array to index, image tuple pairs
     image_array = [(i, image) for i, image in enumerate(image_array)]
 
@@ -299,12 +306,9 @@ def compare_to_set(image_array, target_size=(224, 224)):
     # add back in the None images as zero vectors
     for i, image in image_array:
         if image is None:
-            # style_vectors = torch.cat((style_vectors[:i], torch.zeros(1, style_vectors.size(1)), style_vectors[i:]))
-            # Expected all tensors to be on the same device, but found at least two devices, cuda:0 and cpu! (when checking argument for argument tensors in method wrapper_CUDA_cat)
-            # Fixed version:
             style_vectors = torch.cat((style_vectors[:i], torch.zeros(1, style_vectors.size(1)).to(style_vectors.device), style_vectors[i:]))
 
-    similarity_matrix = torch.zeros(len(image_array), len(image_array))
+    dissimilarity_matrix = torch.zeros(len(image_array), len(image_array))
     for i in range(style_vectors.size(0)):
         for j in range(style_vectors.size(0)):
             if image_array[i] is not None and image_array[j] is not None:
@@ -313,11 +317,11 @@ def compare_to_set(image_array, target_size=(224, 224)):
                 likeness = min(1,max(0, likeness))  # Clip the likeness to [0,1]
                 if likeness < 0.01:
                     likeness = 0
-                similarity_matrix[i][j] = likeness
+                dissimilarity_matrix[i][j] = likeness
 
-    return similarity_matrix.tolist()
+    return dissimilarity_matrix.tolist()
 
-def calculate_mean_dissimilarity(dissimilarity_matrix):
+def calculate_mean_similarity(dissimilarity_matrix):
     num_images = len(dissimilarity_matrix)
     mean_dissimilarities = []
 
