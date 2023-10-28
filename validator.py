@@ -9,6 +9,7 @@ import argparse
 import bittensor as bt
 import numpy as np
 import datetime
+import imagehash
 
 import torchvision.transforms as transforms
 from dendrite import AsyncDendritePool
@@ -465,6 +466,7 @@ async def main():
         width = width,
         negative_prompt = "",
         nsfw_allowed=config.validator.allow_nsfw,
+        seed=random.randint(0, 1e9)
     )
 
     # total pixels
@@ -570,6 +572,12 @@ async def main():
     if torch.sum( rewards ) == 0:
         bt.logging.trace("All rewards are 0, skipping block")
         return
+    
+    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
+    hash_rewards, _ = ImageHashRewards(dendrites_to_query, responses, rewards)
+
+    # multiply rewards by hash rewards
+    rewards = rewards * hash_rewards
 
     # reorder rewards to match dendrites_to_query
     _rewards = torch.zeros( len(uids), dtype = torch.float32 )
@@ -676,6 +684,38 @@ async def main():
         )
         last_updated_block = current_block
         check_for_updates()
+
+def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTensor, List[ str ]):
+    hashmap = {}
+    hashes = []
+    hash_rewards = torch.ones_like( rewards, dtype = torch.float32 )
+    for i, response in enumerate(responses):
+        images = response.images
+        uid = dendrites_to_query[i]
+        hashes.append([])
+        for j, image in enumerate(images):
+            try:
+                img = bt.Tensor.deserialize(image)
+            except:
+                bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
+                hash_rewards[i] = hash_rewards[i] * 0.75
+                hashes[i].append(None)
+                continue
+            if img.sum() == 0:
+                bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
+                hash_rewards[i] = hash_rewards[i] * 0.75
+                hashes[i].append(None)
+                continue
+            hash = imagehash.phash( transforms.ToPILImage()( img ) )
+            if hash in hashmap:
+                bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
+                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[hashmap[hash]] = hash_rewards[hashmap[hash]] * 0.75
+            else:
+                hashmap[hash] = i
+            hashes[i].append(hash)
+    return hash_rewards, hashes
+
 async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
     synapse._version = __version__
     synapse.nsfw_allowed = config.miner.allow_nsfw
