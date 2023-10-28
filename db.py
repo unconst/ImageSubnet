@@ -56,7 +56,7 @@ def create_or_get_hash_id(conn, hash_value):
 
 
 # returns a boolean value indicating whether the hash already existed (True) or was created (False)
-def create_prompt(conn, hash_value, prompt, negative, seed, height, width, timestamp):
+def create_prompt(conn, hash_value, prompt, negative, seed, height, width, timestamp, image_hash=None):
     cursor = conn.cursor()
     
     # Create or get the hash_value and the creation status flag
@@ -64,9 +64,9 @@ def create_prompt(conn, hash_value, prompt, negative, seed, height, width, times
 
     # Insert the prompt with the associated hash_value
     cursor.execute('''
-        INSERT INTO prompts (hash_value, prompt, negative, seed, height, width, timestamp)
+        INSERT INTO prompts (hash_value, prompt, negative, seed, height, width, timestamp, image_hash)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (hash_value, prompt, negative, seed, height, width, timestamp))
+    ''', (hash_value, prompt, negative, seed, height, width, timestamp, image_hash))
     
     conn.commit()
 
