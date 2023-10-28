@@ -10,6 +10,7 @@ import bittensor as bt
 import numpy as np
 import datetime
 import imagehash
+import time
 
 import torchvision.transforms as transforms
 from dendrite import AsyncDendritePool
@@ -23,6 +24,7 @@ bt.trace()
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
+from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt
 from protocol import TextToImage, validate_synapse, ValidatorSettings
 from utils import get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
 check_for_updates()
@@ -365,7 +367,21 @@ async def main():
     rewards = rewards + dissimilarity_weight * dissimilarity_rewards
 
     # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
-    hash_rewards, _ = ImageHashRewards(dendrites_to_query, responses, rewards)
+    hash_rewards, hashes = ImageHashRewards(dendrites_to_query, responses, rewards)
+    
+    # add hashes to the database
+    for i, _hashes in enumerate(hashes):
+        try:
+            resp = responses[i] # TextToImage class
+            for _hash in _hashes:
+                hash_already_exists = create_prompt(conn, _hash, prompt, "", resp.seed, resp.height, resp.width, time.time())
+                if hash_already_exists:
+                    bt.logging.trace(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
+                    # set the reward * 0.5
+                    hash_rewards[i] = hash_rewards[i] * 0.5
+        except Exception as e:
+            bt.logging.trace(f"Error in imagehash: {e}")
+            pass
 
     # multiply rewards by hash rewards
     rewards = rewards * hash_rewards
