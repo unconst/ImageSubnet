@@ -214,7 +214,7 @@ async def main():
             if image is None:
                 images[i] = Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5)), (0, 0, 0))
             else:
-                images[i] = image.resize((int(query.width * 0.5), int(query.height * 0.5)))
+                images[i] = image.resize(int(query.width * 0.5), int(query.height * 0.5))
         # tile images
         tiled_image = tile_images(images)
         # save tiled image
