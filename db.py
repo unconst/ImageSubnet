@@ -7,6 +7,35 @@ if not os.path.exists('./db'):
 
 conn = sqlite3.connect('./db/mydatabase.db')
 
+# Create a cursor
+cursor = conn.cursor()
+
+# Create the 'hashes' table if it doesn't exist
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS hashes (
+        hash_value TEXT PRIMARY KEY
+    )
+''')
+
+# Create the 'prompts' table if it doesn't exist
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS prompts (
+        id INTEGER PRIMARY KEY,
+        hash_value TEXT,
+        prompt TEXT,
+        negative TEXT,
+        seed INTEGER,
+        height INTEGER,
+        width INTEGER,
+        image_hash TEXT,
+        timestamp INTEGER,
+        FOREIGN KEY (hash_value) REFERENCES hashes (hash_value),
+        FOREIGN KEY (image_hash) REFERENCES hashes (hash_value)
+    )
+''')
+
+cursor = None
+
 def delete_prompt_by_id(conn, prompt_id):
     cursor = conn.cursor()
     cursor.execute('DELETE FROM prompts WHERE id = ?', (prompt_id,))
