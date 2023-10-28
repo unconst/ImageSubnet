@@ -18,7 +18,8 @@ from typing import List, Tuple
 
 from protocol import TextToImage, validate_synapse, ValidatorSettings
 
-from utils import calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, tile_images
+from utils import calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards
+from fabric.utils import tile_images
 
 
 bt.trace()
