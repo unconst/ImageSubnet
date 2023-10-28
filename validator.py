@@ -565,6 +565,12 @@ async def main():
     dissimilarity_weight = 0.15
     rewards = rewards + dissimilarity_weight * dissimilarity_rewards
 
+    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
+    hash_rewards, _ = ImageHashRewards(dendrites_to_query, responses, rewards)
+
+    # multiply rewards by hash rewards
+    rewards = rewards * hash_rewards
+
     rewards = rewards / torch.max(rewards)
     bt.logging.trace("Rewards:")
     bt.logging.trace(rewards)
@@ -573,11 +579,6 @@ async def main():
         bt.logging.trace("All rewards are 0, skipping block")
         return
     
-    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
-    hash_rewards, _ = ImageHashRewards(dendrites_to_query, responses, rewards)
-
-    # multiply rewards by hash rewards
-    rewards = rewards * hash_rewards
 
     # reorder rewards to match dendrites_to_query
     _rewards = torch.zeros( len(uids), dtype = torch.float32 )
