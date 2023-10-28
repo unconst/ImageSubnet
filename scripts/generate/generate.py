@@ -55,7 +55,7 @@ def create_query(prompt):
         )
     return query
 
-
+selected_uids = None
 # load uids.txt, these are the uids of the dendrites we want to query
 if os.path.exists(os.path.join(os.path.dirname(os.path.realpath(__file__)), "uids.txt")):
     bt.logging.trace("Found uids.txt, using uids from there")
@@ -88,7 +88,7 @@ async def main():
     queryable_uids = queryable_uids * torch.Tensor([metagraph.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
 
     # set all uids not in selected_uids to 0
-    if selected_uids:
+    if selected_uids is not None:
         for uid in uids:
             if uid not in selected_uids:
                 queryable_uids[list(uids).index(uid)] = 0
