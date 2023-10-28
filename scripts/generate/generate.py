@@ -220,7 +220,7 @@ async def main():
                 # so we have to do it this way
                 images_to_tile.append(Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5))))
             else:
-                images_to_tile.append(image.resize(int(query.width * 0.5), int(query.height * 0.5)))
+                images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
         # tile images
         tiled_image = tile_images(images)
         # save tiled image
