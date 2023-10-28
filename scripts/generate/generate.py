@@ -188,6 +188,13 @@ async def main():
 
         def trim(reward: float) -> str:
             return str(reward.item() if isinstance(reward, torch.Tensor) else reward)[:5]
+        
+        # zip best_images with _uids then sort by filtered_emissions of the uid
+        zipped = list(zip(best_images, _uids))
+        zipped.sort(key=lambda x: filtered_emissions[filtered_uids.index(x[1])], reverse=True)
+
+        # get back images and tile them
+        images = list(zip(*zipped))[0]
 
         # save all images by `imgoutputs/0[uid]-[score].png`
         for i, image in enumerate(best_images):
@@ -201,20 +208,19 @@ async def main():
             except:
                 continue
 
-        # zip best_images with _uids then sort by filtered_emissions of the uid
-        zipped = list(zip(best_images, _uids))
-        zipped.sort(key=lambda x: filtered_emissions[filtered_uids.index(x[1])], reverse=True)
-
-        # get back images and tile them
-        images = list(zip(*zipped))[0]
+        
         # resize to 0.5x0.5
         # images = [image.resize((int(image.width * 0.5), int(image.height * 0.5))) for image in images]
         # the above code doesnt take into accound that the image could be None, replace all None with blank black images of size width * 0.5, height * 0.5
+        images_to_tile = []
         for i, image in enumerate(images):
             if image is None:
-                images[i] = Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5)), (0, 0, 0))
+                # images[i] = Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5)), (0, 0, 0))
+                # the above errors with "tuple" object does not support item assignment
+                # so we have to do it this way
+                images_to_tile.append(Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5))))
             else:
-                images[i] = image.resize(int(query.width * 0.5), int(query.height * 0.5))
+                images_to_tile.append(image.resize(int(query.width * 0.5), int(query.height * 0.5)))
         # tile images
         tiled_image = tile_images(images)
         # save tiled image
