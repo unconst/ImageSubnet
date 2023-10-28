@@ -212,7 +212,7 @@ async def main():
         # the above code doesnt take into accound that the image could be None, replace all None with blank black images of size width * 0.5, height * 0.5
         for i, image in enumerate(images):
             if image is None:
-                images[i] = Image.new('RGB', (int(query * 0.5), int(query * 0.5)), (0, 0, 0))
+                images[i] = Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5)), (0, 0, 0))
             else:
                 images[i] = image.resize((int(query.width * 0.5), int(query.height * 0.5)))
         # tile images
