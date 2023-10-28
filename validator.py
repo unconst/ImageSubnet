@@ -25,8 +25,8 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
 from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt
-from protocol import TextToImage, validate_synapse, ValidatorSettings
 from utils import get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
+from protocol import TextToImage, ImageToImage, validate_synapse, ValidatorSettings
 check_for_updates()
 
 
@@ -382,11 +382,131 @@ async def main():
         except Exception as e:
             bt.logging.trace(f"Error in imagehash: {e}")
             pass
-
+    
     # multiply rewards by hash rewards
     rewards = rewards * hash_rewards
 
     rewards = rewards / torch.max(rewards)
+
+    # find best image
+    best_image_index = torch.argmax(rewards)
+    best_image = responses[best_image_index].images[0]
+    best_image_hash = hashes[best_image_index][0]
+
+    similarities = ["low", "medium", "high"]
+
+    # Create ImageToImage query
+    i2i_query = ImageToImage(
+        image = best_image,
+        height = height,
+        width = width,
+        negative_prompt = "",
+        nsfw_allowed=config.validator.allow_nsfw,
+        seed=random.randint(0, 1e9)
+        similarity = similarities[random.randint(0, len(similarities)-1)]
+    )
+
+    # Get response from endpoints
+    i2i_responses = await dendrite_pool.async_forward(
+        uids = dendrites_to_query,
+        query = i2i_query,
+        timeout = timeout * timeout_increase
+    )
+
+    # validate responses
+    for i, response in enumerate(i2i_responses):
+        valid, error = validate_synapse(response)
+        if not valid:
+            bt.logging.trace(f"Detected invalid response from dendrite {dendrites_to_query[i]}: {error}")
+            del i2i_responses[i]
+            del dendrites_to_query[i]
+        
+    if not config.validator.allow_nsfw:
+        for i, response in enumerate(i2i_responses):
+            # delete all none images
+            for j, image in enumerate(response.images):
+                if image is None:
+                    del i2i_responses[i].images[j]
+            if len(response.images) == 0:
+                continue
+            try:
+                clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( DEVICE )
+                images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( DEVICE ))
+
+                any_nsfw = any(has_nsfw_concept)
+                if any_nsfw:
+                    bt.logging.warning(f"Detected NSFW image(s) from dendrite {dendrites_to_query[i]}")
+
+                # remove all nsfw images from the response
+                for j, has_nsfw in enumerate(has_nsfw_concept):
+                    if has_nsfw:
+                        del i2i_responses[i].images[j]
+            except Exception as e:
+                print(response.images)
+                bt.logging.error(f"Error in NSFW detection: {e}")
+                pass
+    
+    # calculate rewards for prompt alignment
+    (i2i_rewards, best_images) = calculate_rewards_for_prompt_alignment( i2i_query, i2i_responses )
+    i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
+
+    # zip rewards and images together, then filter out all images which have a reward of 0
+    zipped_rewards = list(zip(i2i_rewards, best_images))
+    filtered_rewards = list(zip(*filter(lambda x: x[0] != 0, zipped_rewards)))
+    # get back images
+    filtered_best_images = filtered_rewards[1]
+    
+    # calculate dissimilarity rewards
+    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( filtered_best_images )
+
+    # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
+    new_dissimilarity_rewards = torch.zeros( len(i2i_rewards), dtype = torch.float32 )
+    y = 0
+    for i, reward in enumerate(i2i_rewards):
+        if reward != 0:
+            new_dissimilarity_rewards[i] = dissimilarity_rewards[y]
+            y+=1
+    
+    dissimilarity_rewards = new_dissimilarity_rewards
+
+    dissimilarity_rewards = dissimilarity_rewards / torch.max(dissimilarity_rewards)
+
+    dissimilarity_weight = 0.15
+    i2i_rewards = i2i_rewards + dissimilarity_weight * dissimilarity_rewards
+
+    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
+    hash_rewards, hashes = ImageHashRewards(dendrites_to_query, i2i_responses, i2i_rewards)
+
+    # add hashes to the database
+    for i, _hashes in enumerate(hashes):
+        try:
+            resp = i2i_responses[i] # ImageToImage class
+            for _hash in _hashes:
+                # check if hash is best_image_hash, if so, set reward to 0 and skip adding to database
+                if _hash == best_image_hash:
+                    hash_rewards[i] = 0
+                    bt.logging.warning(f"Miner {dendrites_to_query[i]} submitted image that matches the original image, setting reward to 0")
+                    continue
+                hash_already_exists = create_prompt(conn, _hash, prompt, best_image_hash, resp.seed, resp.height, resp.width, time.time(), best_image_hash)
+                if hash_already_exists:
+                    bt.logging.warning(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
+                    # set the reward * 0.5
+                    hash_rewards[i] = hash_rewards[i] * 0.5
+        except Exception as e:
+            bt.logging.error(f"Error in imagehash of img2img: {e}")
+            pass
+    
+    # multiply rewards by hash rewards
+    i2i_rewards = i2i_rewards * hash_rewards
+
+    i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
+
+    # Add i2i_rewards to rewards
+    rewards = rewards + i2i_rewards
+
+    # normalize rewards such that the highest value is 1
+    rewards = rewards / torch.max(rewards)
+
     bt.logging.trace("Rewards:")
     bt.logging.trace(rewards)
     
