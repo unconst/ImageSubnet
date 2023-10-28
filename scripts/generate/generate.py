@@ -4,6 +4,7 @@ import sys
 import torch
 import argparse
 import numpy as np
+from PIL import Image
 
 # Get the current script's directory (assuming miner.py is in the miners folder)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -207,7 +208,13 @@ async def main():
         # get back images and tile them
         images = list(zip(*zipped))[0]
         # resize to 0.5x0.5
-        images = [image.resize((int(image.width * 0.5), int(image.height * 0.5))) for image in images]
+        # images = [image.resize((int(image.width * 0.5), int(image.height * 0.5))) for image in images]
+        # the above code doesnt take into accound that the image could be None, replace all None with blank black images of size width * 0.5, height * 0.5
+        for i, image in enumerate(images):
+            if image is None:
+                images[i] = Image.new('RGB', (int(query * 0.5), int(query * 0.5)), (0, 0, 0))
+            else:
+                images[i] = image.resize((int(query.width * 0.5), int(query.height * 0.5)))
         # tile images
         tiled_image = tile_images(images)
         # save tiled image
