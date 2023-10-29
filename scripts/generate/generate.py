@@ -223,8 +223,58 @@ async def main():
                 images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
         # tile images
         tiled_image = tile_images(images)
+        
         # save tiled image
         tiled_image.save(f'imgoutputs/{curr_block}/tiled.png')
+
+        # do the same for inverted rewards
+        zipped = list(zip(best_images, _uids))
+        # Sort by inverted rewards
+        zipped.sort(key=lambda x: inverted_rewards[_uids.index(x[1])], reverse=True)
+
+        # get back images and tile them
+        images = list(zip(*zipped))[0]
+        
+        # tile images
+        images_to_tile = []
+        for i, image in enumerate(images):
+            if image is None:
+                # images[i] = Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5)), (0, 0, 0))
+                # the above errors with "tuple" object does not support item assignment
+                # so we have to do it this way
+                images_to_tile.append(Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5))))
+            else:
+                images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
+        
+        tiled_image = tile_images(images)
+
+        # save tiled image
+        tiled_image.save(f'imgoutputs/{curr_block}/tiled-inverted-score.png')
+
+         # do the same for regular rewards
+        zipped = list(zip(best_images, _uids))
+        # Sort by rewards
+        zipped.sort(key=lambda x: rewards[_uids.index(x[1])], reverse=True)
+
+        # get back images and tile them
+        images = list(zip(*zipped))[0]
+        
+        # tile images
+        images_to_tile = []
+        for i, image in enumerate(images):
+            if image is None:
+                # images[i] = Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5)), (0, 0, 0))
+                # the above errors with "tuple" object does not support item assignment
+                # so we have to do it this way
+                images_to_tile.append(Image.new('RGB', (int(query.width * 0.5), int(query.height * 0.5))))
+            else:
+                images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
+        
+        tiled_image = tile_images(images)
+
+        # save tiled image
+        tiled_image.save(f'imgoutputs/{curr_block}/tiled-score.png')
+
 
         # save a file with all uids and scores
         with open(f'imgoutputs/{curr_block}/scores.txt', 'w') as f:
