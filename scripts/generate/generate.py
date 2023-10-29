@@ -222,7 +222,7 @@ async def main():
             else:
                 images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
         # tile images
-        tiled_image = tile_images(images)
+        tiled_image = tile_images(images_to_tile)
         
         # save tiled image
         tiled_image.save(f'imgoutputs/{curr_block}/tiled.png')
@@ -246,7 +246,7 @@ async def main():
             else:
                 images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
         
-        tiled_image = tile_images(images)
+        tiled_image = tile_images(images_to_tile)
 
         # save tiled image
         tiled_image.save(f'imgoutputs/{curr_block}/tiled-inverted-score.png')
@@ -270,7 +270,7 @@ async def main():
             else:
                 images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
         
-        tiled_image = tile_images(images)
+        tiled_image = tile_images(images_to_tile)
 
         # save tiled image
         tiled_image.save(f'imgoutputs/{curr_block}/tiled-score.png')
