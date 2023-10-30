@@ -95,6 +95,7 @@ async def main():
                 queryable_uids[list(uids).index(uid)] = 0
 
     emissions = metagraph.emission
+    coldkeys = [axon.coldkey for axon in metagraph.axons]
             
     zipped_uids = list(zip(metagraph.uids, queryable_uids))
     filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
@@ -279,7 +280,8 @@ async def main():
         # save a file with all uids and scores
         with open(f'imgoutputs/{curr_block}/scores.txt', 'w') as f:
             for i, uid in enumerate(_uids):
-                f.write(f'{uid},{trim(old_rewards[i])},{trim(rewards[i])},{trim(inverted_rewards[i])}\n')
+                coldkey = coldkeys[list(uids).index(uid)]
+                f.write(f'{uid},{coldkey},{trim(old_rewards[i])},{trim(rewards[i])},{trim(inverted_rewards[i])}\n')
 
         # write prompt to file
         with open(f'imgoutputs/{curr_block}/prompt.txt', 'w') as f:
