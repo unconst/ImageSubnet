@@ -138,6 +138,7 @@ def compare_to_set(image_array, target_size=(224, 224)):
     for i in range(style_vectors.size(0)):
         for j in range(style_vectors.size(0)):
             if image_array[i] is not None and image_array[j] is not None:
+                # Similarity score of 1 means the images are identical, 0 means they are completely different
                 similarity = cosine_similarity(style_vectors[i], style_vectors[j])
                 likeness = 1.0 - similarity  # Invert the likeness to get dissimilarity
                 likeness = min(1,max(0, likeness))  # Clip the likeness to [0,1]
@@ -236,7 +237,7 @@ def get_resolution(size_index = None, aspect_ratio_index = None):
 
 
 # Init the validator weights.
-alpha = 0.01
+alpha = 0.0001
 # weights = torch.rand_like( meta.uids, dtype = torch.float32 )
 weights = torch.ones_like( meta.uids , dtype = torch.float32 )
 
@@ -512,6 +513,8 @@ async def main():
             del responses[i]
             del dendrites_to_query[i]
 
+    
+
     if not config.validator.allow_nsfw:
         for i, response in enumerate(responses):
             # delete all none images
@@ -602,8 +605,9 @@ async def main():
         height = height,
         width = width,
         negative_prompt = "",
+        text = prompt,
         nsfw_allowed=config.validator.allow_nsfw,
-        seed=random.randint(0, 1e9)
+        seed=random.randint(0, 1e9),
         similarity = similarities[random.randint(0, len(similarities)-1)]
     )
 
@@ -716,6 +720,10 @@ async def main():
         return
     
 
+    
+    # loop through all images and remove black images
+    SaveImages(dendrites_to_query, prompt, query, responses, rewards)
+
     # reorder rewards to match dendrites_to_query
     _rewards = torch.zeros( len(uids), dtype = torch.float32 )
     for i, uid in enumerate(dendrites_to_query):
@@ -724,78 +732,21 @@ async def main():
     
     weights = weights + alpha * rewards
 
-    # loop through all images and remove black images
-    all_images_and_scores = []
-    for i, response in enumerate(responses):
-        images = response.images
-        for j, image in enumerate(images):
-            try:
-                img = bt.Tensor.deserialize(image)
-            except:
-                bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
-                del responses[i].images[j]
-                continue
-            if img.sum() == 0:
-                bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
-                del responses[i].images[j]
-            else:
-                # add the uid to the image in the top left with PIL
-                pil_img =  transforms.ToPILImage()( img )
-
-                # get size of image, if it doesnt match the size of the request, check to see if it matches the aspect ratio, if not delete it from responses
-                if pil_img.width != query.width or pil_img.height != query.height:
-                    if config.validator.use_absolute_size:
-                        bt.logging.trace(f"Detected image with incorrect size from dendrite {dendrites_to_query[i]}")
-                        del responses[i].images[j]
-                        continue
-                    if pil_img.width / pil_img.height != query.width / query.height:
-                        bt.logging.trace(f"Detected image with incorrect aspect ratio from dendrite {dendrites_to_query[i]}")
-                        del responses[i].images[j]
-                        continue
-
-                if (config.validator.label_images == True):
-                    draw = ImageDraw.Draw(pil_img)
-                    width = pil_img.width
-                    
-                    draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=default_font)
-                    # draw score in top right
-                    draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=default_font)
-                    # downsize image in half
-                    # pil_img = pil_img.resize( (int(pil_img.width / 2), int(pil_img.height / 2)) )
-                all_images_and_scores.append( (pil_img, rewards[i].item()) )
-
-    # if save images is true, save the images to a folder
-    if config.validator.save_images == True:
-        # sort by score
-        all_images_and_scores.sort(key=lambda x: x[1], reverse=True)
-        # get the images
-        all_images = [x[0] for x in all_images_and_scores]
-        tiled_images = tile_images( all_images )
-        # extend the image by 90 px on the top
-        tiled_images = add_black_border( tiled_images, 90 )
-        draw = ImageDraw.Draw(tiled_images)
-        
-        # add text in the top
-        draw.text((10, 10), prompt.encode("utf-8", "ignore").decode("utf-8"), (255, 255, 255), font=default_font)
-
-        # save the image
-        tiled_images.save( f"images/{sub.block}.png", "PNG" )
-        # save a text file with the prompt
-        with open(f"images/{sub.block}.txt", "w") as f:
-            f.write(prompt)
-
-
     # every loop scale weights by 0.993094, sets half life to 100 blocks
     weights = weights * 0.993094
+
+    # hard set weights with 1024 stake to 0
+    weights[meta.total_stake > 1.024e3] = 0
+    
 
     # Optionally set weights
     current_block = sub.block
     if current_block - last_updated_block  >= 100:
         bt.logging.trace(f"Setting weights")
 
-        # Normalize weights.
+         # Normalize weights.
         weights = weights / torch.sum( weights )
-
+        
         # TODO POTENTIALLY ADD THIS IN LATER
         # any weights higher than (1 / len(weights)) * 10 are set to (1 / len(weights)) * 10
         # scale_max = (1 / len(weights)) * (len(weights) * 0.0390625)
@@ -820,7 +771,73 @@ async def main():
             uids = uids,
         )
         last_updated_block = current_block
+
+        # delete_prompts_by_timestamp for timestamps older than 48h
+        delete_prompts_by_timestamp(conn, time.time() - 172800)
+
         check_for_updates()
+
+def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
+    # if save images is true, save the images to a folder
+    if config.validator.save_images == True:
+        all_images_and_scores = []
+        for i, response in enumerate(responses):
+            images = response.images
+            for j, image in enumerate(images):
+                try:
+                    img = bt.Tensor.deserialize(image)
+                except:
+                    bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
+                    del responses[i].images[j]
+                    continue
+                if img.sum() == 0:
+                    bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
+                    del responses[i].images[j]
+                else:
+                    # add the uid to the image in the top left with PIL
+                    pil_img =  transforms.ToPILImage()( img )
+
+                    # get size of image, if it doesnt match the size of the request, check to see if it matches the aspect ratio, if not delete it from responses
+                    if pil_img.width != query.width or pil_img.height != query.height:
+                        if config.validator.use_absolute_size:
+                            bt.logging.trace(f"Detected image with incorrect size from dendrite {dendrites_to_query[i]}")
+                            del responses[i].images[j]
+                            continue
+                        if pil_img.width / pil_img.height != query.width / query.height:
+                            bt.logging.trace(f"Detected image with incorrect aspect ratio from dendrite {dendrites_to_query[i]}")
+                            del responses[i].images[j]
+                            continue
+
+                    if (config.validator.label_images == True):
+                        draw = ImageDraw.Draw(pil_img)
+                        width = pil_img.width
+                        
+                        draw.text((5, 5), str(dendrites_to_query[i]), (255, 255, 255), font=default_font)
+                        # draw score in top right
+                        draw.text((width - 50, 5), str(round(rewards[i].item(), 3)), (255, 255, 255), font=default_font)
+                        # downsize image in half
+                        # pil_img = pil_img.resize( (int(pil_img.width / 2), int(pil_img.height / 2)) )
+                    all_images_and_scores.append( (pil_img, rewards[i].item()) )
+
+        
+        # sort by score
+        all_images_and_scores.sort(key=lambda x: x[1], reverse=True)
+        # get the images
+        all_images = [x[0] for x in all_images_and_scores]
+        tiled_images = tile_images( all_images )
+        # extend the image by 90 px on the top
+        tiled_images = add_black_border( tiled_images, 90 )
+        draw = ImageDraw.Draw(tiled_images)
+        
+        # add text in the top
+        draw.text((10, 10), prompt.encode("utf-8", "ignore").decode("utf-8"), (255, 255, 255), font=default_font)
+
+        # save the image
+        tiled_images.save( f"images/{sub.block}.png", "PNG" )
+        # save a text file with the prompt
+        with open(f"images/{sub.block}.txt", "w") as f:
+            f.write(prompt)
+
 
 def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTensor, List[ str ]):
     hashmap = {}
