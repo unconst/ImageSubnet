@@ -101,6 +101,16 @@ async def main():
         timeout = 20.0
     )
 
+    # wait before calling as to not trigger the time blacklist
+    print("waiting 60s before calling uid: ", config.uid, " with a ImageToImage synapse")
+    await asyncio.sleep(15)
+    print("45s remaining")
+    await asyncio.sleep(15)
+    print("30s...")
+    await asyncio.sleep(15)
+    print("15s...")
+    await asyncio.sleep(15)
+
     print("Attempting to call uid: ", config.uid, " with a ImageToImage synapse")
 
     # get the response
