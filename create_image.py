@@ -106,7 +106,7 @@ async def main():
     response = await asyncio.gather(*[corutine])
 
     # get the image
-    image = response[0].image
+    image = response[0].images[0]
 
     # the image is in a serialized format, deserialize it
     image = bt.Tensor.deserialize(image)
