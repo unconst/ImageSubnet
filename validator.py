@@ -379,7 +379,7 @@ if (config.validator.label_images == True):
 last_queried = {}
 
 async def main():
-    global weights, last_updated_block, last_reset_weights_block
+    global weights, last_updated_block, last_reset_weights_block, last_queried
     # every 10 blocks, sync the metagraph.
     if sub.block % 10 == 0:
         # create old list of (uids, hotkey)
@@ -782,8 +782,11 @@ async def main():
         check_for_updates()
 
 def SetDendritesLastQueried(dendrites_to_query):
+    global last_queried
     for uid in dendrites_to_query:
         last_queried[uid] = datetime.datetime.now()
+
+    return last_queried
 
 def GetTimeoutIncrease(active_miners, dendrites_per_query):
     timeout_increase = 1
