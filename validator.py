@@ -930,6 +930,7 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
             bt.logging.trace(f"Processing dendrite {uid} for image hash")
             # convert img to PIL image
             hash = imagehash.phash( transforms.ToPILImage()( img ) )
+            hash = str(hash)
             if hash in hashmap:
                 bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
                 hash_rewards[i] = hash_rewards[i] * 0.75
