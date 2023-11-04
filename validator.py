@@ -758,6 +758,10 @@ async def main():
 
     # if weight is less than 1/2048, set it to 0
     weights[weights < 1/2048] = 0
+
+    # print weights
+    bt.logging.trace("Weights:")
+    bt.logging.trace(weights)
     
 
     # Optionally set weights
