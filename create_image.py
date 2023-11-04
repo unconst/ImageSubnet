@@ -90,7 +90,8 @@ async def main():
         num_images_per_prompt = 1,
         seed = seed,
         image = response[0].images[0],
-        uid = config.uid
+        uid = config.uid,
+        similarity="low"
     )
 
     # call the uid with dendrite
