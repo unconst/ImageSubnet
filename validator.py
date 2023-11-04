@@ -589,9 +589,16 @@ async def main():
 
 
     # find best image
-    best_image_index = torch.argmax(rewards)
-    best_image = responses[best_image_index].images[0]
-    best_image_hash = hashes[best_image_index][0]
+    try:
+        best_image_index = torch.argmax(rewards)
+        best_image = responses[best_image_index].images[0]
+        best_image_hash = hashes[best_image_index][0]
+    except Exception as e:
+        print(e)
+        print("Error in finding best image")
+        print(rewards)
+        print(best_image_index)
+        return
 
     similarities = ["low", "medium", "high"]
 
