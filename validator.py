@@ -573,6 +573,11 @@ async def main():
     for i, uid in enumerate(dendrites_to_query):
         _rewards[uids.index(uid)] = rewards[i]
     rewards = _rewards
+    # if sum of rewards is 0, skip block
+    if torch.sum( rewards ) == 0:
+        bt.logging.trace("All rewards are 0, skipping block")
+        weights = weights * 0.993094
+        return
     
     weights = weights + alpha * rewards
 
@@ -582,8 +587,6 @@ async def main():
 
     dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
 
-    # unset reward matrix
-    rewards = None
 
     # find best image
     best_image_index = torch.argmax(rewards)
@@ -592,13 +595,17 @@ async def main():
 
     similarities = ["low", "medium", "high"]
 
+    # best_image as pil
+    best_pil_image = transforms.ToPILImage()( bt.Tensor.deserialize(best_image) )
+
     # Create ImageToImage query
     i2i_query = ImageToImage(
         image = best_image,
-        height = height,
-        width = width,
+        height = best_pil_image.height,
+        width = best_pil_image.width,
         negative_prompt = "",
-        text = prompt,
+        # do a 5050 chance of using the prompt or just empty string
+        text = prompt if random.randint(0, 1) == 0 else "",
         nsfw_allowed=config.validator.allow_nsfw,
         seed=random.randint(0, 1e9),
         similarity = similarities[random.randint(0, len(similarities)-1)]
