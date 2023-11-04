@@ -568,27 +568,13 @@ async def main():
 
     rewards = rewards / torch.max(rewards)
 
-     # reorder rewards to match dendrites_to_query
-    _rewards = torch.zeros( len(uids), dtype = torch.float32 )
-    for i, uid in enumerate(dendrites_to_query):
-        _rewards[uids.index(uid)] = rewards[i]
-    rewards = _rewards
     # if sum of rewards is 0, skip block
     if torch.sum( rewards ) == 0:
         bt.logging.trace("All rewards are 0, skipping block")
         weights = weights * 0.993094
         return
-    
-    weights = weights + alpha * rewards
 
-    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
-
-    timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
-
-    dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
-
-
-    # find best image
+     # find best image
     try:
         best_image_index = torch.argmax(rewards)
         best_image = responses[best_image_index].images[0]
@@ -599,6 +585,22 @@ async def main():
         print(rewards)
         print(best_image_index)
         return
+
+    # extend the rewards matrix out to the entire length of uids so it can be added into weights
+    _rewards = torch.zeros( len(uids), dtype = torch.float32 )
+    for i, uid in enumerate(dendrites_to_query):
+        _rewards[uids.index(uid)] = rewards[i]
+    rewards = _rewards
+    
+    
+    weights = weights + alpha * rewards
+
+    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
+
+    timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
+
+    dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
+   
 
     similarities = ["low", "medium", "high"]
 
