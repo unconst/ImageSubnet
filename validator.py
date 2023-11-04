@@ -561,6 +561,7 @@ async def main():
                     hash_rewards[i] = hash_rewards[i] * 0.5
         except Exception as e:
             bt.logging.trace(f"Error in imagehash: {e}")
+            print(e)
             pass
     
     # multiply rewards by hash rewards
