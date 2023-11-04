@@ -89,7 +89,7 @@ async def main():
         width = 768,
         num_images_per_prompt = 1,
         seed = seed,
-        image = image,
+        image = response[0].images[0],
         uid = config.uid
     )
 
