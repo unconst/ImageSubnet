@@ -253,6 +253,9 @@ weights = weights * (meta.total_stake < 1.024e3)
 # set all nodes without ips set to 0
 weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
 
+# normalize
+weights = weights / torch.sum(weights)
+
  # Amount of images
 num_images = 1
 total_dendrites_per_query = 25
