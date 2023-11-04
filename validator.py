@@ -711,6 +711,12 @@ async def main():
         except Exception as e:
             bt.logging.error(f"Error in imagehash of img2img: {e}")
             pass
+
+    # if sum of rewards is 0, skip block
+    if torch.sum( i2i_rewards ) == 0:
+        bt.logging.trace("All i2i rewards are 0, skipping block")
+        weights = weights * 0.993094
+        return
     
     # multiply rewards by hash rewards
     i2i_rewards = i2i_rewards * hash_rewards
