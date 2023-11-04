@@ -136,7 +136,7 @@ def create_prompt(conn, hash_value, prompt, negative, seed, height, width, times
     else:
         # Insert the prompt with the associated hash_value and input_image_hash
         cursor.execute('''
-            INSERT INTO prompts (hash_value, prompt, negative, seed, height, width, image_hash, timestamp)
+            INSERT INTO i2iprompts (hash_value, prompt, negative, seed, height, width, image_hash, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (hash_value, prompt, negative, seed, height, width, input_image_hash, timestamp))
     
