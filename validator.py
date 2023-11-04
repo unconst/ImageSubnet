@@ -375,6 +375,9 @@ if (config.validator.label_images == True):
 
     default_font = ImageFont.truetype(dejavu_font, 30)
 
+# create a dictionary to track the last time a uid was queried
+last_queried = {}
+
 async def main():
     global weights, last_updated_block, last_reset_weights_block
     # every 10 blocks, sync the metagraph.
@@ -404,41 +407,11 @@ async def main():
     bt.logging.trace('uids')
     bt.logging.trace(uids)
 
-    # Select up to dendrites_per_query random dendrites.
-    queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
+    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
 
-    # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
-    queryable_uids = queryable_uids * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
+    timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
 
-    active_miners = torch.sum(queryable_uids)
-    dendrites_per_query = total_dendrites_per_query
-
-    # if there are no active miners, set active_miners to 1
-    if active_miners == 0:
-        active_miners = 1
-
-    # if there are less than dendrites_per_query * 3 active miners, set dendrites_per_query to active_miners / 3
-    if active_miners < total_dendrites_per_query * 3:
-        dendrites_per_query = int(active_miners / 3)
-    else:
-        dendrites_per_query = total_dendrites_per_query
-
-    # less than 1 set to 1
-    if dendrites_per_query < minimum_dendrites_per_query:
-        dendrites_per_query = minimum_dendrites_per_query
-
-    timeout_increase = 1
-
-    if dendrites_per_query > active_miners:
-        bt.logging.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
-    elif active_miners < dendrites_per_query * 3:
-        bt.logging.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
-        timeout_increase = 2
-
-    # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
-    zipped_uids = list(zip(uids, queryable_uids))
-    filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
-    dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
+    dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
 
     # Generate a random synthetic prompt. cut to first 20 characters.
     try:
@@ -504,6 +477,9 @@ async def main():
         query = query,
         timeout = timeout * timeout_increase
     )
+
+    # for each queried uid, set the last queried time to now
+    SetDendritesLastQueried(dendrites_to_query)
 
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
     for i, response in enumerate(responses):
@@ -592,6 +568,23 @@ async def main():
 
     rewards = rewards / torch.max(rewards)
 
+     # reorder rewards to match dendrites_to_query
+    _rewards = torch.zeros( len(uids), dtype = torch.float32 )
+    for i, uid in enumerate(dendrites_to_query):
+        _rewards[uids.index(uid)] = rewards[i]
+    rewards = _rewards
+    
+    weights = weights + alpha * rewards
+
+    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
+
+    timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
+
+    dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
+
+    # unset reward matrix
+    rewards = None
+
     # find best image
     best_image_index = torch.argmax(rewards)
     best_image = responses[best_image_index].images[0]
@@ -617,6 +610,8 @@ async def main():
         query = i2i_query,
         timeout = timeout * timeout_increase
     )
+
+    SetDendritesLastQueried(dendrites_to_query)
 
     # validate responses
     for i, response in enumerate(i2i_responses):
@@ -706,17 +701,15 @@ async def main():
 
     i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
 
-    # Add i2i_rewards to rewards
-    rewards = rewards + i2i_rewards
-
     # normalize rewards such that the highest value is 1
-    rewards = rewards / torch.max(rewards)
+    i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
 
-    bt.logging.trace("Rewards:")
-    bt.logging.trace(rewards)
+    bt.logging.trace("ImageToImage Rewards:")
+    bt.logging.trace(i2i_rewards)
     
-    if torch.sum( rewards ) == 0:
-        bt.logging.trace("All rewards are 0, skipping block")
+    if torch.sum( i2i_rewards ) == 0:
+        bt.logging.trace("All i2i rewards are 0, skipping block")
+        weights = weights * 0.993094
         return
     
 
@@ -737,6 +730,9 @@ async def main():
 
     # hard set weights with 1024 stake to 0
     weights[meta.total_stake > 1.024e3] = 0
+
+    # if weight is less than 1/2048, set it to 0
+    weights[weights < 1/2048] = 0
     
 
     # Optionally set weights
@@ -746,14 +742,6 @@ async def main():
 
          # Normalize weights.
         weights = weights / torch.sum( weights )
-        
-        # TODO POTENTIALLY ADD THIS IN LATER
-        # any weights higher than (1 / len(weights)) * 10 are set to (1 / len(weights)) * 10
-        # scale_max = (1 / len(weights)) * (len(weights) * 0.0390625)
-        # weights[weights > scale_max] = scale_max 
-
-        # # normalize again
-        # weights = weights / torch.sum( weights )
 
         bt.logging.trace("Weights:")
         bt.logging.trace(weights)
@@ -776,6 +764,58 @@ async def main():
         delete_prompts_by_timestamp(conn, time.time() - 172800)
 
         check_for_updates()
+
+def SetDendritesLastQueried(dendrites_to_query):
+    for uid in dendrites_to_query:
+        last_queried[uid] = datetime.datetime.now()
+
+def GetTimeoutIncrease(active_miners, dendrites_per_query):
+    timeout_increase = 1
+
+    if dendrites_per_query > active_miners:
+        bt.logging.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
+    elif active_miners < dendrites_per_query * 3:
+        bt.logging.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
+        timeout_increase = 2
+    return timeout_increase
+
+def GetDendritesToQuery(uids, queryable_uids, dendrites_per_query):
+    # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
+    zipped_uids = list(zip(uids, queryable_uids))
+    filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
+    dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
+    return dendrites_to_query
+
+def GetQueryableUids(uids):
+    # Select up to dendrites_per_query random dendrites.
+    queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
+
+    # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
+    queryable_uids = queryable_uids * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
+
+    # loop through queryable uids and check if if they have been queried in the last 2 minutes, if so, set queryable_uids[uid] to 0
+    for uid in uids:
+        if uid in last_queried:
+            if (datetime.datetime.now() - last_queried[uid]).total_seconds() < 120:
+                queryable_uids[uids.index(uid)] = 0
+
+    active_miners = torch.sum(queryable_uids)
+    dendrites_per_query = total_dendrites_per_query
+
+    # if there are no active miners, set active_miners to 1
+    if active_miners == 0:
+        active_miners = 1
+
+    # if there are less than dendrites_per_query * 3 active miners, set dendrites_per_query to active_miners / 3
+    if active_miners < total_dendrites_per_query * 3:
+        dendrites_per_query = int(active_miners / 3)
+    else:
+        dendrites_per_query = total_dendrites_per_query
+
+    # less than 1 set to 1
+    if dendrites_per_query < minimum_dendrites_per_query:
+        dendrites_per_query = minimum_dendrites_per_query
+    return queryable_uids,active_miners,dendrites_per_query
 
 def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
     # if save images is true, save the images to a folder
