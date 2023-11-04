@@ -116,3 +116,5 @@ async def main():
     print("hash: ", hash)
 
     print("Done!")
+
+asyncio.run(main())
