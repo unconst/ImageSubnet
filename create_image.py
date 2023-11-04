@@ -105,6 +105,10 @@ async def main():
     # get the response
     response = await asyncio.gather(*[corutine])
 
+    if len(response[0].images) == 0:
+        print("No images found for uid: ", config.uid, " with a ImageToImage synapse")
+        return
+
     # get the image
     image = response[0].images[0]
 
