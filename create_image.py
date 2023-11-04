@@ -76,7 +76,7 @@ async def main():
     pil_img =  transforms.ToPILImage()( image )
 
     # generate hash for image using dhash
-    hash = imagehash.dhash(pil_img)
+    hash = imagehash.phash(pil_img)
     hash = str(hash)
 
     print("hash: ", hash)
@@ -114,8 +114,8 @@ async def main():
     # convert to PIL image
     pil_img =  transforms.ToPILImage()( image )
 
-    # generate hash for image using dhash
-    hash = imagehash.dhash(pil_img)
+    # generate hash for image using phash
+    hash = imagehash.phash(pil_img)
 
     print("hash: ", hash)
 
