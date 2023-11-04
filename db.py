@@ -200,8 +200,8 @@ def create_prompt(conn, batch_id, hash_value, image_order_id, uid, prompt, negat
     else:
         # Insert the prompt with the associated hash_value and input_image_hash
         cursor.execute('''
-            INSERT INTO i2iprompts (batch_id, hash_value, uid, prompt, negative, seed, height, width, image_hash, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO i2iprompts (batch_id, hash_value, image_order_id, uid, prompt, negative, seed, height, width, image_hash, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (batch_id, hash_value, image_order_id, uid, prompt, negative, seed, height, width, input_image_hash, timestamp))
     
     conn.commit()
