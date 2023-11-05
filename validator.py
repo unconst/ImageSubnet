@@ -24,7 +24,7 @@ bt.trace()
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
-from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt, create_batch, get_prompts_of_random_batch, Prompt
+from db import conn, delete_prompts_by_uid, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt, create_batch, get_prompts_of_random_batch, Prompt
 from protocol import TextToImage, ImageToImage, validate_synapse, ValidatorSettings
 from utils import check_for_updates, __version__
 check_for_updates()
@@ -817,12 +817,19 @@ def SyncMetagraphIfNeeded():
     if sub.block % 10 == 0:
         # create old list of (uids, hotkey)
         old_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
+
         meta.sync(subtensor = sub, )
         # create new list of (uids, hotkey)
         new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
         # if the lists are different, reset weights for that uid
-        for i in range(len(old_uids)):
-            if old_uids[i] != new_uids[i]:
+        for i in range(len(new_uids)):
+            if len(old_uids) > i:
+                if old_uids[i] != new_uids[i]:
+                    weights[i] = 0.3 * torch.median( weights[weights != 0] )
+                    
+                    # delete all prompts for that uid
+                    delete_prompts_by_uid(conn, new_uids[i][0])
+            else:
                 weights[i] = 0.3 * torch.median( weights[weights != 0] )
 
 def SetDendritesLastQueried(dendrites_to_query):
