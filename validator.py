@@ -369,18 +369,28 @@ async def main():
         bt.logging.trace("Weights:")
         bt.logging.trace(weights)
 
-        uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
-            uids = meta.uids,
-            weights = weights,
-            netuid = config.netuid,
-            subtensor = sub,
-        )
-        sub.set_weights(
-            wallet = wallet,
-            netuid = config.netuid,
-            weights = processed_weights,
-            uids = uids,
-        )
+        _has_set = False
+        _retries = 0
+        while _has_set == False:
+            try:
+                uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+                    uids = meta.uids,
+                    weights = weights,
+                    netuid = config.netuid,
+                    subtensor = sub,
+                )
+                sub.set_weights(
+                    wallet = wallet,
+                    netuid = config.netuid,
+                    weights = processed_weights,
+                    uids = uids,
+                )
+            except Exception as e:
+                _sleep_time = 2 ** _retries
+                _sleep_time = 30 if _sleep_time > 30 else _sleep_time
+                bt.logging.warning(f"Error setting weights: {e} retrying in {_sleep_time} seconds")
+                sleep(_sleep_time)
+                continue
         last_updated_block = current_block
 
         # delete_prompts_by_timestamp for timestamps older than 48h
