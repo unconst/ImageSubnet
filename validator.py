@@ -146,7 +146,7 @@ async def main():
 
     # use rand int to select int between 1-10
     randomint = random.randint(1, 10)
-    if randomint == 1:
+    if randomint == 1 and False: # Disabled for now
         # get batch between 48h ago and now
         prompts = get_prompts_of_random_batch(conn, time.time() - 172800)
 
