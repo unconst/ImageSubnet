@@ -818,6 +818,7 @@ def GeneratePrompt():
     return initial_prompt,prompt
 
 def ExtendWeightMatrixIfNeeded(uids):
+    global weights
     if len(uids) > len(weights):
         bt.logging.trace("Adding more weights")
         size_difference = len(uids) - len(weights)
