@@ -1024,7 +1024,7 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
     hash_rewards = torch.ones_like( rewards, dtype = torch.float32 )
     for i, response in enumerate(responses):
         images = response.images
-        uid = dendrites_to_query[i]e
+        uid = dendrites_to_query[i]
         hashes.append([])
         # if rewards is 0, skip
         if rewards[i] == 0:
