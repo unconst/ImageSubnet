@@ -157,6 +157,11 @@ async def main():
 
         # uids
         dendrites_to_query = [prompt.uid for prompt in prompts]
+        bt.logging.trace(f"Querying {len(dendrites_to_query)} dendrites with requery")
+        # if len of dend is 0 warn and skip block
+        if len(dendrites_to_query) == 0:
+            bt.logging.warning("No dendrites to query, skipping block")
+            return
 
         rewards = torch.zeros( len(dendrites_to_query), dtype = torch.float32 )
         # create a dictionary where the key is the uid and the value is a list of prompts for that uid sorted in the order of image_order_Id
@@ -169,7 +174,13 @@ async def main():
             prompts_dict[uid] = sorted(prompts_dict[uid], key=lambda x: x.image_order_id)
 
         # get the maximum number of images for any uid
-        maximum_number_of_images = max([len(prompts_dict[uid]) for uid in prompts_dict])
+        prompts = [len(prompts_dict[uid]) for uid in prompts_dict]
+
+        if len(prompts) == 0:
+            bt.logging.warning("No prompts found, skipping block")
+            return
+
+        maximum_number_of_images = max(prompts)
 
         # recreate the query from the prompt
         query = TextToImage(
@@ -385,7 +396,7 @@ async def main():
     ### END SET WEIGHTS SECTION ###
 
     _loop += 1
-    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}")
+    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}, { (sub.block - last_updated_block) / 100 } blocks until weights are updated")
 
 ### END MAIN FUNCTION ###
 
@@ -730,6 +741,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
 
     # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
     hash_rewards, hashes = ImageHashRewards(dendrites_to_query, responses, rewards)
+    bt.logging.trace(f"Hash rewards: {hash_rewards}")
     
     # add hashes to the database
     for i, _hashes in enumerate(hashes):
@@ -1012,8 +1024,14 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
     hash_rewards = torch.ones_like( rewards, dtype = torch.float32 )
     for i, response in enumerate(responses):
         images = response.images
-        uid = dendrites_to_query[i]
+        uid = dendrites_to_query[i]e
         hashes.append([])
+        # if rewards is 0, skip
+        if rewards[i] == 0:
+            bt.logging.trace(f"Detected 0 reward from dendrite {dendrites_to_query[i]} skipping image hash")
+            hash_rewards[i] = 0
+            for x in enumerate(len(hashes[i].append(None)))
+            continue
         for j, image in enumerate(images):
             try:
                 img = bt.Tensor.deserialize(image)
