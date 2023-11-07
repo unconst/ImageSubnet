@@ -136,7 +136,7 @@ processor = CLIPImageProcessor()
 last_queried = {}
 
 async def main():
-    global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
+    global weights, last_updated_block, last_reset_weights_block, last_queried, _loop, _last_normalized_weights
 
     SyncMetagraphIfNeeded()
     uids = meta.uids.tolist() 
