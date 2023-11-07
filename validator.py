@@ -320,7 +320,10 @@ async def main():
         # reorder rewards to match dendrites_to_query
         _rewards = torch.zeros( len(uids), dtype = torch.float32 )
         for i, uid in enumerate(dendrites_to_query):
-            _rewards[uids.index(uid)] = i2i_rewards[i]
+            if not torch.isnan(i2i_rewards[i]):
+                _rewards[uids.index(uid)] = i2i_rewards[i]
+            else:
+                bt.logging.warning(f"Reward for uid {uid} is nan (326)! This should not be the case!")
         i2i_rewards = _rewards
         
         weights = weights + alpha * i2i_rewards
@@ -682,7 +685,11 @@ def add_black_border(image, border_size):
 def ExtendRewardMatrixToUidsLength(all_uids, dendrites_to_query, rewards):
     _rewards = torch.zeros( len(all_uids), dtype = torch.float32 )
     for i, uid in enumerate(dendrites_to_query):
-        _rewards[all_uids.index(uid)] = rewards[i]
+        # check if rewards[i] is nan
+        if not torch.isnan(rewards[i]):
+            _rewards[all_uids.index(uid)] = rewards[i]
+        else:
+            bt.logging.warning(f"Reward for uid {uid} is nan! This should not be the case!")
     rewards = _rewards
     return rewards
 
@@ -738,6 +745,9 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     
     # multiply rewards by hash rewards
     rewards = rewards * hash_rewards
+
+    if torch.sum( rewards ) == 0:
+        return rewards, hashes
 
     rewards = rewards / torch.max(rewards)
     return rewards,hashes
