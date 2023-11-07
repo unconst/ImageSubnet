@@ -443,7 +443,7 @@ async def AsyncQueryTextToImage(all_uids, query):
 
 def ScoreTextToImage(responses, batch_id, query, uids):
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
-    dendrites_to_query, responses = ValidateResponses(dendrites_to_query, responses)
+    dendrites_to_query, responses = ValidateResponses(uids, responses)
 
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
 
