@@ -849,20 +849,31 @@ def SyncMetagraphIfNeeded():
     if sub.block % 10 == 0:
         # create old list of (uids, hotkey)
         old_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
-
-        meta.sync(subtensor = sub, )
-        # create new list of (uids, hotkey)
-        new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
-        # if the lists are different, reset weights for that uid
-        for i in range(len(new_uids)):
-            if len(old_uids) > i:
-                if old_uids[i] != new_uids[i]:
-                    weights[i] = 0.3 * torch.median( weights[weights != 0] )
-                    
-                    # delete all prompts for that uid
-                    delete_prompts_by_uid(conn, new_uids[i][0])
-            else:
-                weights[i] = 0.3 * torch.median( weights[weights != 0] )
+        _retries = 0
+        _not_synced = True
+        while _not_synced:
+            try:
+                meta.sync(subtensor = sub, )
+                _not_synced = False
+                # create new list of (uids, hotkey)
+                new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
+                # if the lists are different, reset weights for that uid
+                for i in range(len(new_uids)):
+                    if len(old_uids) > i:
+                        if old_uids[i] != new_uids[i]:
+                            weights[i] = 0.3 * torch.median( weights[weights != 0] )
+                            
+                            # delete all prompts for that uid
+                            delete_prompts_by_uid(conn, new_uids[i][0])
+                    else:
+                        weights[i] = 0.3 * torch.median( weights[weights != 0] )
+            except:
+                _retries += 1
+                _seconds_to_wait = 2 ** _retries
+                if _seconds_to_wait > 30:
+                    _seconds_to_wait = 30
+                bt.logging.trace("Error in syncing metagraph... retrying in {} seconds".format(_seconds_to_wait))
+                time.sleep(_seconds_to_wait)
 
 def SetDendritesLastQueried(dendrites_to_query):
     global last_queried
