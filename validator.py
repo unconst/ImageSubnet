@@ -396,7 +396,7 @@ async def main():
     ### END SET WEIGHTS SECTION ###
 
     _loop += 1
-    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}, { (sub.block - last_updated_block) / 100 } blocks until weights are updated")
+    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}, { 100 - (sub.block - last_updated_block) } blocks until weights are updated")
 
 ### END MAIN FUNCTION ###
 
@@ -1026,6 +1026,12 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
         images = response.images
         uid = dendrites_to_query[i]
         hashes.append([])
+        # if rewards is 0 set hash_reward to 0
+        if rewards[i] == 0:
+            hash_rewards[i] = 0
+            for j in enumerate(images):
+                hashes[i].append(None)
+            continue
         for j, image in enumerate(images):
             try:
                 img = bt.Tensor.deserialize(image)
