@@ -695,6 +695,10 @@ def ExtendRewardMatrixToUidsLength(all_uids, dendrites_to_query, rewards):
 
 def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, best_image_hash = None):
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
+
+    if torch.sum( rewards ) == 0:
+        return rewards, []
+    
     rewards = rewards / torch.max(rewards)
 
     # zip rewards and images together, then filter out all images which have a reward of 0
