@@ -1026,12 +1026,6 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
         images = response.images
         uid = dendrites_to_query[i]
         hashes.append([])
-        # if rewards is 0, skip
-        if rewards[i] == 0:
-            bt.logging.trace(f"Detected 0 reward from dendrite {dendrites_to_query[i]} skipping image hash")
-            hash_rewards[i] = 0
-            for x in enumerate(len(hashes[i].append(None)))
-            continue
         for j, image in enumerate(images):
             try:
                 img = bt.Tensor.deserialize(image)
