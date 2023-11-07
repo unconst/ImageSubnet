@@ -182,7 +182,7 @@ async def main():
             seed=prompts[0].seed,
         )
 
-        query, timeout, responses = await AsyncQueryTextToImage(uids, query)
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
         hashes = GetImageHashesOfResponses(responses)
 
@@ -249,7 +249,7 @@ async def main():
 
         batch_id = create_batch(conn, time.time())
 
-        query, timeout, responses = await AsyncQueryTextToImage(uids, query)
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
         rewards, hashes = ScoreTextToImage(responses, batch_id, query, uids)
 
@@ -304,7 +304,7 @@ async def main():
 
         batch_id = create_batch(conn, time.time())
 
-        i2i_rewards, i2i_responses = await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
+        i2i_rewards, i2i_responses, dendrites_to_query = await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
 
         # if sum of rewards is 0, skip block
         if torch.sum( i2i_rewards ) == 0 or torch.max( i2i_rewards ) == 0:
@@ -406,7 +406,7 @@ async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeo
 
     i2i_rewards, _ = CalculateRewards(dendrites_to_query, batch_id, prompt, i2i_query, i2i_responses, best_image_hash)
 
-    return i2i_rewards, i2i_responses
+    return i2i_rewards, i2i_responses, dendrites_to_query
 
 async def AsyncQueryTextToImage(all_uids, query):
     global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
@@ -439,7 +439,7 @@ async def AsyncQueryTextToImage(all_uids, query):
     # for each queried uid, set the last queried time to now
     SetDendritesLastQueried(dendrites_to_query)
 
-    return query, timeout, responses
+    return query, timeout, responses, dendrites_to_query
 
 def ScoreTextToImage(responses, batch_id, query, uids):
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
