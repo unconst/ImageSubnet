@@ -118,6 +118,7 @@ weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' fo
 
 # normalize
 weights = weights / torch.sum(weights)
+_last_normalized_weights = curr_block - (curr_block % 25)
 
  # Amount of images
 num_images = 1
@@ -146,8 +147,8 @@ async def main():
     # use rand int to select int between 1-10
     randomint = random.randint(1, 10)
     if randomint == 1:
-        # get batch between  24h ago and 4h ago
-        prompts = get_prompts_of_random_batch(conn, time.time() - 86400, time.time() - 14400)
+        # get batch between 48h ago and now
+        prompts = get_prompts_of_random_batch(conn, time.time() - 172800)
 
         # if prompts is none, skip block
         if prompts is None:
@@ -219,7 +220,10 @@ async def main():
         # extend the rewards matrix out to the entire length of uids so it can be added into weights
         rewards = ExtendRewardMatrixToUidsLength(uids, dendrites_to_query, rewards)
 
-        weights = weights + alpha * rewards
+        # because we don't normalize we need to add a scaling factor additional to that of alpha
+        scaling = 0.075
+
+        weights = weights + alpha * rewards * scaling
 
         # every loop scale weights by 0.993094, sets half life to 100 blocks
         weights = weights * 0.993094
@@ -247,8 +251,30 @@ async def main():
 
         query, timeout, responses = await AsyncQueryTextToImage(uids, query)
 
-        # score images
-        _ , serialized_best_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, uids)
+        rewards, hashes = ScoreTextToImage(responses, batch_id, query, uids)
+
+        # if sum of rewards is 0, skip block
+        if torch.sum( rewards ) == 0:
+            bt.logging.trace("All rewards are 0, skipping block")
+            weights = weights * 0.993094
+            return
+
+        # find best image
+        try:
+            best_image_index = torch.argmax(rewards)
+            serialized_best_image = responses[best_image_index].images[0]
+            best_image_hash = hashes[best_image_index][0]
+        except Exception as e:
+            print(e)
+            print("Error in finding best image")
+            print(rewards)
+            print(best_image_index)
+            return
+
+        # extend the rewards matrix out to the entire length of uids so it can be added into weights
+        rewards = ExtendRewardMatrixToUidsLength(uids, dendrites_to_query, rewards)
+
+        weights = weights + alpha * rewards
 
         prompt = query.text
 
@@ -278,13 +304,42 @@ async def main():
 
         batch_id = create_batch(conn, time.time())
 
-        await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
+        i2i_rewards, i2i_responses = await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
+
+        # if sum of rewards is 0, skip block
+        if torch.sum( i2i_rewards ) == 0 or torch.max( i2i_rewards ) == 0:
+            weights = weights * 0.993094
+            return
+
+        i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
+
+        
+        # loop through all images and remove black images
+        SaveImages(dendrites_to_query, prompt, i2i_query, i2i_responses, i2i_rewards)
+
+        # reorder rewards to match dendrites_to_query
+        _rewards = torch.zeros( len(uids), dtype = torch.float32 )
+        for i, uid in enumerate(dendrites_to_query):
+            _rewards[uids.index(uid)] = i2i_rewards[i]
+        i2i_rewards = _rewards
+        
+        weights = weights + alpha * i2i_rewards
 
         ### END IMAGE TO IMAGE SECTION ###
 
 
-    _loop += 1
-    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}")
+        ### WEIGHT MANAGEMENT SECTION ###
+
+        # every loop scale weights by 0.993094, sets half life to 100 blocks
+        weights = weights * 0.993094
+
+        # hard set weights with 1024 stake to 0
+        weights[meta.total_stake > 1.024e3] = 0
+
+        # if weight is less than 1/2048, set it to 0
+        weights[weights < 1/2048] = 0
+
+        ### END WEIGHT MANAGEMENT SECTION ###
 
 
     ### SET WEIGHTS SECTION ###
@@ -293,8 +348,9 @@ async def main():
     if current_block - last_updated_block  >= 100:
         bt.logging.trace(f"Setting weights")
 
-         # Normalize weights.
+        # Normalize weights.
         weights = weights / torch.sum( weights )
+        _last_normalized_weights = sub.block
 
         bt.logging.trace("Weights:")
         bt.logging.trace(weights)
@@ -317,8 +373,18 @@ async def main():
         delete_prompts_by_timestamp(conn, time.time() - 172800)
 
         check_for_updates()
+    elif sub.block - _last_normalized_weights >= 25:
+        # Normalize weights.
+        weights = weights / torch.sum( weights )
+        _last_normalized_weights = sub.block
+        bt.logging.trace("25 blocks have passed, normalizing weights")
 
     ### END SET WEIGHTS SECTION ###
+
+    _loop += 1
+    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}")
+
+### END MAIN FUNCTION ###
 
 async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id):
     queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
@@ -326,7 +392,6 @@ async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeo
     timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
 
     dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
-   
 
     # Get response from endpoints
     i2i_responses = await dendrite_pool.async_forward(
@@ -341,33 +406,7 @@ async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeo
 
     i2i_rewards, _ = CalculateRewards(dendrites_to_query, batch_id, prompt, i2i_query, i2i_responses, best_image_hash)
 
-    # if sum of rewards is 0, skip block
-    if torch.sum( i2i_rewards ) == 0 or torch.max( i2i_rewards ) == 0:
-        weights = weights * 0.993094
-        return
-
-    i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
-
-    
-    # loop through all images and remove black images
-    SaveImages(dendrites_to_query, prompt, i2i_query, i2i_responses, i2i_rewards)
-
-    # reorder rewards to match dendrites_to_query
-    _rewards = torch.zeros( len(uids), dtype = torch.float32 )
-    for i, uid in enumerate(dendrites_to_query):
-        _rewards[uids.index(uid)] = i2i_rewards[i]
-    i2i_rewards = _rewards
-    
-    weights = weights + alpha * i2i_rewards
-
-    # every loop scale weights by 0.993094, sets half life to 100 blocks
-    weights = weights * 0.993094
-
-    # hard set weights with 1024 stake to 0
-    weights[meta.total_stake > 1.024e3] = 0
-
-    # if weight is less than 1/2048, set it to 0
-    weights[weights < 1/2048] = 0
+    return i2i_rewards, i2i_responses
 
 async def AsyncQueryTextToImage(all_uids, query):
     global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
@@ -409,30 +448,8 @@ def ScoreTextToImage(responses, batch_id, query, uids):
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
 
     rewards, hashes = CalculateRewards(dendrites_to_query, batch_id, query.text, query, responses)
-
-    # if sum of rewards is 0, skip block
-    if torch.sum( rewards ) == 0:
-        bt.logging.trace("All rewards are 0, skipping block")
-        weights = weights * 0.993094
-        return
-
-     # find best image
-    try:
-        best_image_index = torch.argmax(rewards)
-        serialized_best_image = responses[best_image_index].images[0]
-        best_image_hash = hashes[best_image_index][0]
-    except Exception as e:
-        print(e)
-        print("Error in finding best image")
-        print(rewards)
-        print(best_image_index)
-        return
-
-    # extend the rewards matrix out to the entire length of uids so it can be added into weights
-    rewards = ExtendRewardMatrixToUidsLength(uids, dendrites_to_query, rewards)
     
-    weights = weights + alpha * rewards
-    return rewards, serialized_best_image, best_image_hash
+    return rewards, hashes
 
 def load_and_preprocess_image_array(image_array, target_size):
     image_transform = transforms.Compose([
