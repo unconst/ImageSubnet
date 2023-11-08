@@ -66,7 +66,7 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils import StableDiffusionSafetyChecker
+from utils import StableDiffusionSafetyChecker, transform
 from transformers import CLIPImageProcessor
 from fabric.utils import get_free_gpu, tile_images
 import matplotlib.font_manager as fm
@@ -342,7 +342,7 @@ async def main():
 
         similarities = ["low", "medium", "high"]
 
-        serialized_best_image = bt.Tensor.serialize(best_pil_image)
+        serialized_best_image = bt.Tensor.serialize(transform(best_pil_image))
 
         # Create ImageToImage query
         i2i_query = ImageToImage(
