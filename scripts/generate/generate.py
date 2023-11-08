@@ -86,7 +86,7 @@ async def main():
     queryable_uids = (metagraph.last_update > curr_block - 600) * (metagraph.total_stake < 1.024e3)
 
     # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
-    queryable_uids = queryable_uids * torch.Tensor([metagraph.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
+    queryable_uids = queryable_uids[:len(metagraph.neurons)] * torch.Tensor([metagraph.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids][:len(queryable_uids)])
 
     # set all uids not in selected_uids to 0
     if selected_uids is not None:

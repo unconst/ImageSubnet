@@ -931,7 +931,7 @@ def GetQueryableUids(uids):
     # if queryable_uids doesnt match the length of meta.neurons, extend it
 
     # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
-    queryable_uids = queryable_uids * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids[:len(queryable_uids)]])
+    queryable_uids = queryable_uids = queryable_uids[:len(meta.neurons)] * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids][:len(queryable_uids)])
 
     # loop through queryable uids and check if if they have been queried in the last 2 minutes, if so, set queryable_uids[uid] to 0
     for uid in uids:
