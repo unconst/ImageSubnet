@@ -773,6 +773,8 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     if torch.sum( rewards ) == 0:
         return rewards, hashes, None, None
     
+    rewards = rewards / torch.max(rewards)
+
      # log uids
     bt.logging.trace(f"UIDs: {dendrites_to_query}")
     # log all rewards and the best image index / hash
@@ -780,7 +782,6 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     # log best score
     bt.logging.trace(f"Best score: {torch.max(rewards)} UID: {dendrites_to_query[best_image_index]} HASH: {best_image_hash}")
 
-    rewards = rewards / torch.max(rewards)
     return rewards,hashes,best_pil_image,best_image_hash
 
 
