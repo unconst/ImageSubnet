@@ -314,7 +314,7 @@ async def main():
 
         query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
-        rewards, hashes, serialized_best_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, dendrites_to_query)
+        rewards, hashes, best_pil_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, dendrites_to_query)
 
         # if sum of rewards is 0, skip block
         if torch.sum( rewards ) == 0:
@@ -329,7 +329,7 @@ async def main():
 
         prompt = query.text
 
-        if serialized_best_image is None:
+        if best_pil_image is None:
             bt.logging.warning("No best image found in text to image batch, skipping image to image")
             weights = weights * 0.993094
             return
@@ -342,8 +342,7 @@ async def main():
 
         similarities = ["low", "medium", "high"]
 
-        # best_image as pil
-        best_pil_image = transforms.ToPILImage()( bt.Tensor.deserialize(serialized_best_image) )
+        serialized_best_image = bt.Tensor.serialize(best_pil_image)
 
         # Create ImageToImage query
         i2i_query = ImageToImage(
@@ -466,9 +465,9 @@ def ScoreTextToImage(responses, batch_id, query, dendrites_to_query):
 
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
 
-    rewards, hashes, serialized_best_image,best_image_hash = CalculateRewards(dendrites_to_query, batch_id, query.text, query, responses)
+    rewards, hashes, best_pil_image,best_image_hash = CalculateRewards(dendrites_to_query, batch_id, query.text, query, responses)
     
-    return rewards, hashes, serialized_best_image,best_image_hash
+    return rewards, hashes, best_pil_image,best_image_hash
 
 def load_and_preprocess_image_array(image_array, target_size):
     image_transform = transforms.Compose([
@@ -764,7 +763,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
 
     # get best image from rewards
     best_image_index = torch.argmax(rewards)
-    serialized_best_image = best_images[best_image_index]
+    best_pil_image = best_images[best_image_index]
     best_image_hash = hashes[best_image_index][0]
 
    
@@ -780,7 +779,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     bt.logging.trace(f"Best score: {torch.max(rewards)} UID: {dendrites_to_query[best_image_index]} HASH: {best_image_hash}")
 
     rewards = rewards / torch.max(rewards)
-    return rewards,hashes,serialized_best_image,best_image_hash
+    return rewards,hashes,best_pil_image,best_image_hash
 
 
 
