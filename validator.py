@@ -314,7 +314,7 @@ async def main():
 
         query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
-        rewards, hashes, serialized_best_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, uids)
+        rewards, hashes, serialized_best_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, dendrites_to_query)
 
         # if sum of rewards is 0, skip block
         if torch.sum( rewards ) == 0:
@@ -460,9 +460,9 @@ async def AsyncQueryTextToImage(all_uids, query):
 
     return query, timeout, responses, dendrites_to_query
 
-def ScoreTextToImage(responses, batch_id, query, uids):
+def ScoreTextToImage(responses, batch_id, query, dendrites_to_query):
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
-    dendrites_to_query, responses = ValidateResponses(uids, responses)
+    dendrites_to_query, responses = ValidateResponses(dendrites_to_query, responses)
 
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
 
