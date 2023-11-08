@@ -761,17 +761,15 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     # multiply rewards by hash rewards
     rewards = rewards * hash_rewards
 
+    if torch.sum( rewards ) == 0:
+        return rewards, hashes, None, None
+
     # get best image from rewards
     best_image_index = torch.argmax(rewards)
     best_pil_image = best_images[best_image_index]
     if len(hashes[best_image_index]) == 0:
         return rewards, hashes, None, None
     best_image_hash = hashes[best_image_index][0]
-
-   
-
-    if torch.sum( rewards ) == 0:
-        return rewards, hashes, None, None
     
     rewards = rewards / torch.max(rewards)
 
