@@ -136,7 +136,7 @@ processor = CLIPImageProcessor()
 last_queried = {}
 
 async def main():
-    global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
+    global weights, last_updated_block, last_reset_weights_block, last_queried, _loop, _last_normalized_weights
 
     SyncMetagraphIfNeeded()
     uids = meta.uids.tolist() 
@@ -146,7 +146,7 @@ async def main():
 
     # use rand int to select int between 1-10
     randomint = random.randint(1, 10)
-    if randomint == 1:
+    if randomint == 1 and False: # Disabled for now
         # get batch between 48h ago and now
         prompts = get_prompts_of_random_batch(conn, time.time() - 172800)
 
@@ -157,6 +157,11 @@ async def main():
 
         # uids
         dendrites_to_query = [prompt.uid for prompt in prompts]
+        bt.logging.trace(f"Querying {len(dendrites_to_query)} dendrites with requery")
+        # if len of dend is 0 warn and skip block
+        if len(dendrites_to_query) == 0:
+            bt.logging.warning("No dendrites to query, skipping block")
+            return
 
         rewards = torch.zeros( len(dendrites_to_query), dtype = torch.float32 )
         # create a dictionary where the key is the uid and the value is a list of prompts for that uid sorted in the order of image_order_Id
@@ -169,7 +174,13 @@ async def main():
             prompts_dict[uid] = sorted(prompts_dict[uid], key=lambda x: x.image_order_id)
 
         # get the maximum number of images for any uid
-        maximum_number_of_images = max([len(prompts_dict[uid]) for uid in prompts_dict])
+        prompts = [len(prompts_dict[uid]) for uid in prompts_dict]
+
+        if len(prompts) == 0:
+            bt.logging.warning("No prompts found, skipping block")
+            return
+
+        maximum_number_of_images = max(prompts)
 
         # recreate the query from the prompt
         query = TextToImage(
@@ -182,7 +193,7 @@ async def main():
             seed=prompts[0].seed,
         )
 
-        query, timeout, responses = await AsyncQueryTextToImage(uids, query)
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
         hashes = GetImageHashesOfResponses(responses)
 
@@ -249,7 +260,7 @@ async def main():
 
         batch_id = create_batch(conn, time.time())
 
-        query, timeout, responses = await AsyncQueryTextToImage(uids, query)
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
         rewards, hashes = ScoreTextToImage(responses, batch_id, query, uids)
 
@@ -304,7 +315,7 @@ async def main():
 
         batch_id = create_batch(conn, time.time())
 
-        i2i_rewards, i2i_responses = await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
+        i2i_rewards, i2i_responses, dendrites_to_query = await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
 
         # if sum of rewards is 0, skip block
         if torch.sum( i2i_rewards ) == 0 or torch.max( i2i_rewards ) == 0:
@@ -320,7 +331,10 @@ async def main():
         # reorder rewards to match dendrites_to_query
         _rewards = torch.zeros( len(uids), dtype = torch.float32 )
         for i, uid in enumerate(dendrites_to_query):
-            _rewards[uids.index(uid)] = i2i_rewards[i]
+            if not torch.isnan(i2i_rewards[i]):
+                _rewards[uids.index(uid)] = i2i_rewards[i]
+            else:
+                bt.logging.warning(f"Reward for uid {uid} is nan (326)! This should not be the case!")
         i2i_rewards = _rewards
         
         weights = weights + alpha * i2i_rewards
@@ -355,18 +369,29 @@ async def main():
         bt.logging.trace("Weights:")
         bt.logging.trace(weights)
 
-        uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
-            uids = meta.uids,
-            weights = weights,
-            netuid = config.netuid,
-            subtensor = sub,
-        )
-        sub.set_weights(
-            wallet = wallet,
-            netuid = config.netuid,
-            weights = processed_weights,
-            uids = uids,
-        )
+        _has_set = False
+        _retries = 0
+        while _has_set == False:
+            try:
+                uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+                    uids = meta.uids,
+                    weights = weights,
+                    netuid = config.netuid,
+                    subtensor = sub,
+                )
+                sub.set_weights(
+                    wallet = wallet,
+                    netuid = config.netuid,
+                    weights = processed_weights,
+                    uids = uids,
+                )
+                _has_set = True
+            except Exception as e:
+                _sleep_time = 2 ** _retries
+                _sleep_time = 30 if _sleep_time > 30 else _sleep_time
+                bt.logging.warning(f"Error setting weights: {e} retrying in {_sleep_time} seconds")
+                sleep(_sleep_time)
+                continue
         last_updated_block = current_block
 
         # delete_prompts_by_timestamp for timestamps older than 48h
@@ -382,7 +407,7 @@ async def main():
     ### END SET WEIGHTS SECTION ###
 
     _loop += 1
-    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}")
+    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}, { 100 - (sub.block - last_updated_block) } blocks until weights are updated")
 
 ### END MAIN FUNCTION ###
 
@@ -406,7 +431,7 @@ async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeo
 
     i2i_rewards, _ = CalculateRewards(dendrites_to_query, batch_id, prompt, i2i_query, i2i_responses, best_image_hash)
 
-    return i2i_rewards, i2i_responses
+    return i2i_rewards, i2i_responses, dendrites_to_query
 
 async def AsyncQueryTextToImage(all_uids, query):
     global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
@@ -439,11 +464,11 @@ async def AsyncQueryTextToImage(all_uids, query):
     # for each queried uid, set the last queried time to now
     SetDendritesLastQueried(dendrites_to_query)
 
-    return query, timeout, responses
+    return query, timeout, responses, dendrites_to_query
 
 def ScoreTextToImage(responses, batch_id, query, uids):
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
-    dendrites_to_query, responses = ValidateResponses(dendrites_to_query, responses)
+    dendrites_to_query, responses = ValidateResponses(uids, responses)
 
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
 
@@ -505,11 +530,19 @@ def compare_to_set(image_array, target_size=(224, 224)):
             style_vectors = torch.cat((style_vectors[:i], torch.zeros(1, style_vectors.size(1)).to(style_vectors.device), style_vectors[i:]))
 
     similarity_matrix = torch.zeros(len(image_array), len(image_array))
-    for i in range(style_vectors.size(0)):
-        for j in range(style_vectors.size(0)):
+    _i_minus = 0
+    for i in range(len(image_array)):
+        if image_array[i] is None:
+            _i_minus += 1
+            continue
+        _j_minus = 0
+        for j in range(len(image_array)):
+            if image_array[j] is None:
+                _j_minus += 1
+                continue
             if image_array[i] is not None and image_array[j] is not None:
                 # Similarity score of 1 means the images are identical, 0 means they are completely different
-                similarity = cosine_similarity(style_vectors[i], style_vectors[j])
+                similarity = cosine_similarity(style_vectors[i - _i_minus], style_vectors[j - _j_minus])
                 likeness = 1.0 - similarity  # Invert the likeness to get dissimilarity
                 likeness = min(1,max(0, likeness))  # Clip the likeness to [0,1]
                 if likeness < 0.01:
@@ -682,19 +715,27 @@ def add_black_border(image, border_size):
 def ExtendRewardMatrixToUidsLength(all_uids, dendrites_to_query, rewards):
     _rewards = torch.zeros( len(all_uids), dtype = torch.float32 )
     for i, uid in enumerate(dendrites_to_query):
-        _rewards[all_uids.index(uid)] = rewards[i]
+        # check if rewards[i] is nan
+        if not torch.isnan(rewards[i]):
+            _rewards[all_uids.index(uid)] = rewards[i]
+        else:
+            bt.logging.warning(f"Reward for uid {uid} is nan! This should not be the case!")
     rewards = _rewards
     return rewards
 
 def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, best_image_hash = None):
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
+
+    if torch.sum( rewards ) == 0:
+        return rewards, []
+    
     rewards = rewards / torch.max(rewards)
 
-    # zip rewards and images together, then filter out all images which have a reward of 0
-    zipped_rewards = list(zip(rewards, best_images))
-    filtered_rewards = list(zip(*filter(lambda x: x[0] != 0, zipped_rewards)))
-    # get back images
-    filtered_best_images = filtered_rewards[1]
+    # zip rewards, images, and dendrites_to_query together, then filter out all images which have a reward of 0
+    zipped_rewards = list(zip(rewards, best_images, dendrites_to_query))
+    filtered_rewards = list(filter(lambda x: x[0] != 0, zipped_rewards))
+    # get back all images from tuple list [(reward, image)] -> [image]
+    filtered_best_images = [tup[1] for tup in filtered_rewards]
 
     dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( filtered_best_images )
 
@@ -719,6 +760,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
 
     # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
     hash_rewards, hashes = ImageHashRewards(dendrites_to_query, responses, rewards)
+    bt.logging.trace(f"Hash rewards: {hash_rewards}")
     
     # add hashes to the database
     for i, _hashes in enumerate(hashes):
@@ -738,6 +780,9 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     
     # multiply rewards by hash rewards
     rewards = rewards * hash_rewards
+
+    if torch.sum( rewards ) == 0:
+        return rewards, hashes
 
     rewards = rewards / torch.max(rewards)
     return rewards,hashes
@@ -818,6 +863,7 @@ def GeneratePrompt():
     return initial_prompt,prompt
 
 def ExtendWeightMatrixIfNeeded(uids):
+    global weights
     if len(uids) > len(weights):
         bt.logging.trace("Adding more weights")
         size_difference = len(uids) - len(weights)
@@ -834,20 +880,31 @@ def SyncMetagraphIfNeeded():
     if sub.block % 10 == 0:
         # create old list of (uids, hotkey)
         old_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
-
-        meta.sync(subtensor = sub, )
-        # create new list of (uids, hotkey)
-        new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
-        # if the lists are different, reset weights for that uid
-        for i in range(len(new_uids)):
-            if len(old_uids) > i:
-                if old_uids[i] != new_uids[i]:
-                    weights[i] = 0.3 * torch.median( weights[weights != 0] )
-                    
-                    # delete all prompts for that uid
-                    delete_prompts_by_uid(conn, new_uids[i][0])
-            else:
-                weights[i] = 0.3 * torch.median( weights[weights != 0] )
+        _retries = 0
+        _not_synced = True
+        while _not_synced:
+            try:
+                meta.sync(subtensor = sub, )
+                _not_synced = False
+                # create new list of (uids, hotkey)
+                new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
+                # if the lists are different, reset weights for that uid
+                for i in range(len(new_uids)):
+                    if len(old_uids) > i:
+                        if old_uids[i] != new_uids[i]:
+                            weights[i] = 0.3 * torch.median( weights[weights != 0] )
+                            
+                            # delete all prompts for that uid
+                            delete_prompts_by_uid(conn, new_uids[i][0])
+                    else:
+                        weights[i] = 0.3 * torch.median( weights[weights != 0] )
+            except:
+                _retries += 1
+                _seconds_to_wait = 2 ** _retries
+                if _seconds_to_wait > 30:
+                    _seconds_to_wait = 30
+                bt.logging.trace("Error in syncing metagraph... retrying in {} seconds".format(_seconds_to_wait))
+                time.sleep(_seconds_to_wait)
 
 def SetDendritesLastQueried(dendrites_to_query):
     global last_queried
@@ -988,6 +1045,12 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
         images = response.images
         uid = dendrites_to_query[i]
         hashes.append([])
+        # if rewards is 0 set hash_reward to 0
+        if rewards[i] == 0:
+            hash_rewards[i] = 0
+            for j in enumerate(images):
+                hashes[i].append(None)
+            continue
         for j, image in enumerate(images):
             try:
                 img = bt.Tensor.deserialize(image)
