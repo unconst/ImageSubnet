@@ -715,7 +715,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
 
     if torch.sum( rewards ) == 0:
-        return rewards, []
+        return rewards, [], None, None
     
     rewards = rewards / torch.max(rewards)
 
