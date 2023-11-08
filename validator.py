@@ -764,6 +764,8 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     # get best image from rewards
     best_image_index = torch.argmax(rewards)
     best_pil_image = best_images[best_image_index]
+    if len(hashes[best_image_index]) == 0:
+        return rewards, hashes, None, None
     best_image_hash = hashes[best_image_index][0]
 
    
@@ -1052,12 +1054,12 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
                 img = bt.Tensor.deserialize(image)
             except:
                 bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
             if img.sum() == 0:
                 bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
 
@@ -1067,8 +1069,8 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
             hash = str(hash)
             if hash in hashmap:
                 bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
-                hash_rewards[hashmap[hash]] = hash_rewards[hashmap[hash]] * 0.75
+                hash_rewards[i] = 0
+                hash_rewards[hashmap[hash]] = 0
             else:
                 hashmap[hash] = i
             hashes[i].append(hash)
