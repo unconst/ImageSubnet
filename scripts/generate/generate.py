@@ -118,7 +118,6 @@ async def main():
             if not valid:
                 bt.logging.trace(f"Detected invalid response from dendrite {queryable_uids[i]}: {error}")
                 del responses[i]
-                del queryable_uids[i]
         bt.logging.trace("Calculating rewards")
         (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
         rewards = rewards / torch.max(rewards)
