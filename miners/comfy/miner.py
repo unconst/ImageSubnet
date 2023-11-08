@@ -341,6 +341,10 @@ def verify_t2i( synapse: TextToImage ) -> None:
 
 async def forward_i2i( synapse: ImageToImage ) -> ImageToImage:
 
+    # check if the image value exists in the synapse
+    if synapse.image is None:
+        raise ValueError("image must be set in synapse")
+
     bt.logging.trace("Inside forward function")
 
     seed = synapse.seed
