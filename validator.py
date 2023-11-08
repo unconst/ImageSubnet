@@ -162,7 +162,7 @@ async def main():
         _retries = 0
         while _has_set == False:
             try:
-                uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+                _uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
                     uids = meta.uids,
                     weights = weights,
                     netuid = config.netuid,
@@ -172,7 +172,7 @@ async def main():
                     wallet = wallet,
                     netuid = config.netuid,
                     weights = processed_weights,
-                    uids = uids,
+                    uids = _uids,
                 )
                 _has_set = True
             except Exception as e:
