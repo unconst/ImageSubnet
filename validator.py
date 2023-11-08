@@ -385,6 +385,7 @@ async def main():
                     weights = processed_weights,
                     uids = uids,
                 )
+                _has_set = True
             except Exception as e:
                 _sleep_time = 2 ** _retries
                 _sleep_time = 30 if _sleep_time > 30 else _sleep_time
