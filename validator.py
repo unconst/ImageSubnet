@@ -66,7 +66,7 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils import StableDiffusionSafetyChecker
+from utils import StableDiffusionSafetyChecker, transform
 from transformers import CLIPImageProcessor
 from fabric.utils import get_free_gpu, tile_images
 import matplotlib.font_manager as fm
@@ -143,6 +143,58 @@ async def main():
 
     # if uids is longer than weight matrix, then we need to add more weights.
     ExtendWeightMatrixIfNeeded(uids)
+
+    ### SET WEIGHTS SECTION ###
+    # Set weights was moved to the top of the function in case t2i or i2i returns early for multiple blocks causing weight setting to never happen
+    
+    current_block = sub.block
+    if current_block - last_updated_block  >= 100:
+        bt.logging.trace(f"Setting weights")
+
+        # Normalize weights.
+        weights = weights / torch.sum( weights )
+        _last_normalized_weights = sub.block
+
+        bt.logging.trace("Weights:")
+        bt.logging.trace(weights)
+
+        _has_set = False
+        _retries = 0
+        while _has_set == False:
+            try:
+                _uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+                    uids = meta.uids,
+                    weights = weights,
+                    netuid = config.netuid,
+                    subtensor = sub,
+                )
+                sub.set_weights(
+                    wallet = wallet,
+                    netuid = config.netuid,
+                    weights = processed_weights,
+                    uids = _uids,
+                )
+                _has_set = True
+            except Exception as e:
+                _sleep_time = 2 ** _retries
+                _sleep_time = 30 if _sleep_time > 30 else _sleep_time
+                bt.logging.warning(f"Error setting weights: {e} retrying in {_sleep_time} seconds")
+                sleep(_sleep_time)
+                continue
+        last_updated_block = current_block
+
+        # delete_prompts_by_timestamp for timestamps older than 48h
+        delete_prompts_by_timestamp(conn, time.time() - 172800)
+
+        check_for_updates()
+    elif sub.block - _last_normalized_weights >= 25:
+        # Normalize weights.
+        weights = weights / torch.sum( weights )
+        _last_normalized_weights = sub.block
+        bt.logging.trace("25 blocks have passed, normalizing weights")
+
+    ### END SET WEIGHTS SECTION ###
+
 
     # use rand int to select int between 1-10
     randomint = random.randint(1, 10)
@@ -262,24 +314,12 @@ async def main():
 
         query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
 
-        rewards, hashes = ScoreTextToImage(responses, batch_id, query, uids)
+        rewards, hashes, best_pil_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, dendrites_to_query)
 
         # if sum of rewards is 0, skip block
         if torch.sum( rewards ) == 0:
             bt.logging.trace("All rewards are 0, skipping block")
             weights = weights * 0.993094
-            return
-
-        # find best image
-        try:
-            best_image_index = torch.argmax(rewards)
-            serialized_best_image = responses[best_image_index].images[0]
-            best_image_hash = hashes[best_image_index][0]
-        except Exception as e:
-            print(e)
-            print("Error in finding best image")
-            print(rewards)
-            print(best_image_index)
             return
 
         # extend the rewards matrix out to the entire length of uids so it can be added into weights
@@ -289,6 +329,11 @@ async def main():
 
         prompt = query.text
 
+        if best_pil_image is None:
+            bt.logging.warning("No best image found in text to image batch, skipping image to image")
+            weights = weights * 0.993094
+            return
+
         ### END TEXT TO IMAGE SECTION ###
 
 
@@ -297,8 +342,7 @@ async def main():
 
         similarities = ["low", "medium", "high"]
 
-        # best_image as pil
-        best_pil_image = transforms.ToPILImage()( bt.Tensor.deserialize(serialized_best_image) )
+        serialized_best_image = bt.Tensor.serialize(transform(best_pil_image))
 
         # Create ImageToImage query
         i2i_query = ImageToImage(
@@ -342,69 +386,18 @@ async def main():
         ### END IMAGE TO IMAGE SECTION ###
 
 
-        ### WEIGHT MANAGEMENT SECTION ###
+    ### WEIGHT MANAGEMENT SECTION ###
 
-        # every loop scale weights by 0.993094, sets half life to 100 blocks
-        weights = weights * 0.993094
+    # every loop scale weights by 0.993094, sets half life to 100 blocks
+    weights = weights * 0.993094
 
-        # hard set weights with 1024 stake to 0
-        weights[meta.total_stake > 1.024e3] = 0
+    # hard set weights with 1024 stake to 0
+    weights[meta.total_stake > 1.024e3] = 0
 
-        # if weight is less than 1/2048, set it to 0
-        weights[weights < 1/2048] = 0
+    # if weight is less than 1/2048, set it to 0
+    weights[weights < 1/2048] = 0
 
-        ### END WEIGHT MANAGEMENT SECTION ###
-
-
-    ### SET WEIGHTS SECTION ###
-    
-    current_block = sub.block
-    if current_block - last_updated_block  >= 100:
-        bt.logging.trace(f"Setting weights")
-
-        # Normalize weights.
-        weights = weights / torch.sum( weights )
-        _last_normalized_weights = sub.block
-
-        bt.logging.trace("Weights:")
-        bt.logging.trace(weights)
-
-        _has_set = False
-        _retries = 0
-        while _has_set == False:
-            try:
-                uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
-                    uids = meta.uids,
-                    weights = weights,
-                    netuid = config.netuid,
-                    subtensor = sub,
-                )
-                sub.set_weights(
-                    wallet = wallet,
-                    netuid = config.netuid,
-                    weights = processed_weights,
-                    uids = uids,
-                )
-                _has_set = True
-            except Exception as e:
-                _sleep_time = 2 ** _retries
-                _sleep_time = 30 if _sleep_time > 30 else _sleep_time
-                bt.logging.warning(f"Error setting weights: {e} retrying in {_sleep_time} seconds")
-                sleep(_sleep_time)
-                continue
-        last_updated_block = current_block
-
-        # delete_prompts_by_timestamp for timestamps older than 48h
-        delete_prompts_by_timestamp(conn, time.time() - 172800)
-
-        check_for_updates()
-    elif sub.block - _last_normalized_weights >= 25:
-        # Normalize weights.
-        weights = weights / torch.sum( weights )
-        _last_normalized_weights = sub.block
-        bt.logging.trace("25 blocks have passed, normalizing weights")
-
-    ### END SET WEIGHTS SECTION ###
+    ### END WEIGHT MANAGEMENT SECTION ###
 
     _loop += 1
     bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}, { 100 - (sub.block - last_updated_block) } blocks until weights are updated")
@@ -429,7 +422,7 @@ async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeo
 
     dendrites_to_query, i2i_responses = CheckForNSFW(dendrites_to_query, i2i_responses)
 
-    i2i_rewards, _ = CalculateRewards(dendrites_to_query, batch_id, prompt, i2i_query, i2i_responses, best_image_hash)
+    i2i_rewards, _, _, _ = CalculateRewards(dendrites_to_query, batch_id, prompt, i2i_query, i2i_responses, best_image_hash)
 
     return i2i_rewards, i2i_responses, dendrites_to_query
 
@@ -466,15 +459,15 @@ async def AsyncQueryTextToImage(all_uids, query):
 
     return query, timeout, responses, dendrites_to_query
 
-def ScoreTextToImage(responses, batch_id, query, uids):
+def ScoreTextToImage(responses, batch_id, query, dendrites_to_query):
     # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
-    dendrites_to_query, responses = ValidateResponses(uids, responses)
+    dendrites_to_query, responses = ValidateResponses(dendrites_to_query, responses)
 
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
 
-    rewards, hashes = CalculateRewards(dendrites_to_query, batch_id, query.text, query, responses)
+    rewards, hashes, best_pil_image,best_image_hash = CalculateRewards(dendrites_to_query, batch_id, query.text, query, responses)
     
-    return rewards, hashes
+    return rewards, hashes, best_pil_image,best_image_hash
 
 def load_and_preprocess_image_array(image_array, target_size):
     image_transform = transforms.Compose([
@@ -530,16 +523,19 @@ def compare_to_set(image_array, target_size=(224, 224)):
             style_vectors = torch.cat((style_vectors[:i], torch.zeros(1, style_vectors.size(1)).to(style_vectors.device), style_vectors[i:]))
 
     similarity_matrix = torch.zeros(len(image_array), len(image_array))
-    for i in range(style_vectors.size(0)):
-        for j in range(style_vectors.size(0)):
+    for i in range(len(image_array)):
+        for j in range(len(image_array)):
             if image_array[i] is not None and image_array[j] is not None:
-                # Similarity score of 1 means the images are identical, 0 means they are completely different
-                similarity = cosine_similarity(style_vectors[i], style_vectors[j])
-                likeness = 1.0 - similarity  # Invert the likeness to get dissimilarity
-                likeness = min(1,max(0, likeness))  # Clip the likeness to [0,1]
-                if likeness < 0.01:
-                    likeness = 0
-                similarity_matrix[i][j] = likeness
+                if torch.sum(style_vectors[i]) == 0 or torch.sum(style_vectors[j]) == 0:
+                    similarity_matrix[i][j] = 0
+                else:
+                    # Similarity score of 1 means the images are identical, 0 means they are completely different
+                    similarity = cosine_similarity(style_vectors[i], style_vectors[j])
+                    likeness = 1.0 - similarity  # Invert the likeness to get dissimilarity
+                    likeness = min(1,max(0, likeness))  # Clip the likeness to [0,1]
+                    if likeness < 0.01:
+                        likeness = 0
+                    similarity_matrix[i][j] = likeness
 
     return similarity_matrix.tolist()
 
@@ -719,25 +715,18 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
 
     if torch.sum( rewards ) == 0:
-        return rewards, []
+        return rewards, [], None, None
     
     rewards = rewards / torch.max(rewards)
 
-    # zip rewards and images together, then filter out all images which have a reward of 0
-    zipped_rewards = list(zip(rewards, best_images))
-    filtered_rewards = list(zip(*filter(lambda x: x[0] != 0, zipped_rewards)))
-    # get back images
-    filtered_best_images = filtered_rewards[1]
-
-    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( filtered_best_images )
+    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( best_images )
 
     # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
     new_dissimilarity_rewards = torch.zeros( len(rewards), dtype = torch.float32 )
-    y = 0
+
     for i, reward in enumerate(rewards):
         if reward != 0:
-            new_dissimilarity_rewards[i] = dissimilarity_rewards[y]
-            y+=1
+            new_dissimilarity_rewards[i] = dissimilarity_rewards[i]
 
     dissimilarity_rewards = new_dissimilarity_rewards
 
@@ -763,8 +752,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
                 hash_already_exists = create_prompt(conn, batch_id, _hash, uid, prompt, "", resp.seed, resp.height, resp.width, time.time(), best_image_hash)
                 if hash_already_exists:
                     bt.logging.trace(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
-                    # set the reward * 0.5
-                    hash_rewards[i] = hash_rewards[i] * 0.5
+                    hash_rewards[i] = 0
         except Exception as e:
             bt.logging.trace(f"Error in imagehash: {e}") if best_image_hash is None else bt.logging.trace(f"Error in i2i imagehash: {e}")
             print(e)
@@ -774,10 +762,25 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     rewards = rewards * hash_rewards
 
     if torch.sum( rewards ) == 0:
-        return rewards, hashes
+        return rewards, hashes, None, None
 
+    # get best image from rewards
+    best_image_index = torch.argmax(rewards)
+    best_pil_image = best_images[best_image_index]
+    if len(hashes[best_image_index]) == 0:
+        return rewards, hashes, None, None
+    best_image_hash = hashes[best_image_index][0]
+    
     rewards = rewards / torch.max(rewards)
-    return rewards,hashes
+
+     # log uids
+    bt.logging.trace(f"UIDs: {dendrites_to_query}")
+    # log all rewards and the best image index / hash
+    bt.logging.trace(f"Calculated Rewards: {rewards}")
+    # log best score
+    bt.logging.trace(f"Best score: {torch.max(rewards)} UID: {dendrites_to_query[best_image_index]} HASH: {best_image_hash}")
+
+    return rewards,hashes,best_pil_image,best_image_hash
 
 
 
@@ -926,8 +929,11 @@ def GetQueryableUids(uids):
     # Select up to dendrites_per_query random dendrites.
     queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
 
+    # if queryable_uids doesnt match the length of meta.neurons, extend it
+
     # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
-    queryable_uids = queryable_uids * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
+    non_zero_ips = [meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids]
+    queryable_uids = queryable_uids = queryable_uids[:len(non_zero_ips)] * torch.Tensor(non_zero_ips[:len(queryable_uids)])
 
     # loop through queryable uids and check if if they have been queried in the last 2 minutes, if so, set queryable_uids[uid] to 0
     for uid in uids:
@@ -1048,12 +1054,12 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
                 img = bt.Tensor.deserialize(image)
             except:
                 bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
             if img.sum() == 0:
                 bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
 
@@ -1063,8 +1069,8 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
             hash = str(hash)
             if hash in hashmap:
                 bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
-                hash_rewards[hashmap[hash]] = hash_rewards[hashmap[hash]] * 0.75
+                hash_rewards[i] = 0
+                hash_rewards[hashmap[hash]] = 0
             else:
                 hashmap[hash] = i
             hashes[i].append(hash)
