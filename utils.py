@@ -10,7 +10,7 @@ import sys
 import argparse
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--no-restart', type=bool, default=False)
+parser.add_argument('--no-restart', type=bool, default=False, action="store_true", help='Do not restart after update')
 
 config = bt.config( parser )
 
