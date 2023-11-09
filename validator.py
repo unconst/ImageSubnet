@@ -3,13 +3,10 @@ import os
 import sys
 import torch
 import random
-import typing
-import pydantic
 import argparse
 import bittensor as bt
 import numpy as np
 import datetime
-import imagehash
 import time
 
 import torchvision.transforms as transforms
@@ -25,7 +22,7 @@ current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
 from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt, create_batch, delete_prompts_by_uid
-from utils import GeneratePrompt, get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts, models, compare_to_set, calculate_mean_dissimilarity
+from utils import GeneratePrompt, PHashImage, get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts, models, compare_to_set, calculate_mean_dissimilarity
 from protocol import TextToImage, ImageToImage, validate_synapse, ValidatorSettings
 check_for_updates()
 
@@ -853,8 +850,7 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
 
             bt.logging.trace(f"Processing dendrite {uid} for image hash")
             # convert img to PIL image
-            hash = imagehash.phash( transforms.ToPILImage()( img ) )
-            hash = str(hash)
+            hash = PHashImage(img)
             if hash in hashmap:
                 bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
                 hash_rewards[i] = 0
@@ -863,6 +859,8 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
                 hashmap[hash] = i
             hashes[i].append(hash)
     return hash_rewards, hashes
+
+
 
 def GetImageHashesOfResponses(responses):
     hashes = []
@@ -880,8 +878,7 @@ def GetImageHashesOfResponses(responses):
                 continue
 
             # convert img to PIL image
-            hash = imagehash.phash( transforms.ToPILImage()( img ) )
-            hash = str(hash)
+            hash = PHashImage(img)
             hashes[i].append(hash)
     return hashes
 

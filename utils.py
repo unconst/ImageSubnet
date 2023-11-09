@@ -9,6 +9,7 @@ import bittensor as bt
 import sys
 import argparse
 import random
+import imagehash
 
 from typing import List
 from protocol import TextToImage
@@ -398,3 +399,15 @@ def GeneratePrompt():
     initial_prompt = ' '.join(initial_prompt[:keep])
     prompt = prompt_generation_pipe( initial_prompt, min_length=30 )[0]['generated_text']
     return initial_prompt,prompt
+
+def PHashImage(img):
+    # check type of input can either be Image.Image, torch.Tensor or bittensor.tensor.Tensor
+    if isinstance(img, bt.Tensor):
+        img = bt.Tensor.deserialize(img)
+    if isinstance(img, torch.Tensor):
+        img = transforms.ToPILImage()(img)
+    elif not isinstance(img, Image.Image):
+        raise TypeError("img must be of type Image.Image, torch.Tensor or bittensor.tensor.Tensor")
+    hash = imagehash.phash( img )
+    hash = str(hash)
+    return hash
