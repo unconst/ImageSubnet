@@ -125,7 +125,8 @@ num_images = 1
 total_dendrites_per_query = 25
 minimum_dendrites_per_query = 3
 
-last_updated_block = curr_block - (curr_block % 100)
+SET_WEIGHTS_EVERY_X_BLOCKS = 101
+last_updated_block = curr_block - (curr_block % SET_WEIGHTS_EVERY_X_BLOCKS)
 last_reset_weights_block = curr_block
 _loop = 0
 
@@ -148,7 +149,7 @@ async def main():
     # Set weights was moved to the top of the function in case t2i or i2i returns early for multiple blocks causing weight setting to never happen
     
     current_block = sub.block
-    if current_block - last_updated_block  >= 100:
+    if current_block - last_updated_block  >= SET_WEIGHTS_EVERY_X_BLOCKS:
         bt.logging.trace(f"Setting weights")
 
         # Normalize weights.
