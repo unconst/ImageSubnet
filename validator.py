@@ -24,13 +24,10 @@ bt.trace()
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
-from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt
-from utils import get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
+from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt, create_batch, delete_prompts_by_uid
+from utils import GeneratePrompt, get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts, models, compare_to_set, calculate_mean_dissimilarity
 from protocol import TextToImage, ImageToImage, validate_synapse, ValidatorSettings
 check_for_updates()
-
-
-    
 
 # Load the config.
 parser = argparse.ArgumentParser()
@@ -69,35 +66,415 @@ import torchvision.transforms as transforms
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils import StableDiffusionSafetyChecker
+from utils import StableDiffusionSafetyChecker, transform
 from transformers import CLIPImageProcessor
 from fabric.utils import get_free_gpu, tile_images
-import matplotlib.font_manager as fm
 
-DEVICE = get_device(config)
+
+DEVICE = torch.device(config.device if torch.cuda.is_available() else "cpu")
 
 # For image to text generation.
 # Load the scoring model
-scoring_model = get_scoring_model(config)
-
-# Load prompt dataset.
-from datasets import load_dataset
-# generate random seed
-seed=random.randint(0, 1000000)
-dataset = iter(load_dataset("poloclub/diffusiondb")['train'].shuffle(seed=seed).to_iterable_dataset())
-
-# For prompt generation
-from transformers import pipeline
-prompt_generation_pipe = pipeline("text-generation", model="succinctly/text2image-prompt-generator")
+import ImageReward as RM
+scoring_model = RM.load("ImageReward-v1.0", device=DEVICE)
 
 # Form the dendrite pool.
 dendrite_pool = AsyncDendritePool( wallet = wallet, metagraph = meta )
 
 # list of sizes
-sizes = [512, 768, 1024, 1280]
+sizes = [512, 768, 1024, 1536]
 
 # list of aspect ratios [(1, 1), (4, 3), (16, 9)]
 aspect_ratios = [(1, 1), (4, 3), (3, 4), (16, 9), (9, 16)]
+
+
+# Init the validator weights.
+alpha = 0.0001
+# weights = torch.rand_like( meta.uids, dtype = torch.float32 )
+weights = torch.ones_like( meta.uids , dtype = torch.float32 )
+
+# multiply weights by the active tensor
+curr_block = sub.block
+
+# loop over all last_update, any that are within 600 blocks are set to 1 others are set to 0 
+weights = weights * meta.last_update > curr_block - 600
+
+# all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
+weights = weights * (meta.total_stake < 1.024e3) 
+
+# set all nodes without ips set to 0
+weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
+
+# normalize
+weights = weights / torch.sum(weights)
+_last_normalized_weights = curr_block - (curr_block % 25)
+
+ # Amount of images
+num_images = 1
+total_dendrites_per_query = 25
+minimum_dendrites_per_query = 3
+
+SET_WEIGHTS_EVERY_X_BLOCKS = 101
+last_updated_block = curr_block - (curr_block % SET_WEIGHTS_EVERY_X_BLOCKS)
+last_reset_weights_block = curr_block
+_loop = 0
+
+safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
+processor = CLIPImageProcessor()
+
+# create a dictionary to track the last time a uid was queried
+last_queried = {}
+
+async def main():
+    global weights, last_updated_block, last_reset_weights_block, last_queried, _loop, _last_normalized_weights
+
+    SyncMetagraphIfNeeded()
+    uids = meta.uids.tolist() 
+
+    # if uids is longer than weight matrix, then we need to add more weights.
+    ExtendWeightMatrixIfNeeded(uids)
+
+    ### SET WEIGHTS SECTION ###
+    # Set weights was moved to the top of the function in case t2i or i2i returns early for multiple blocks causing weight setting to never happen
+    
+    current_block = sub.block
+    if current_block - last_updated_block  >= SET_WEIGHTS_EVERY_X_BLOCKS:
+        bt.logging.trace(f"Setting weights")
+
+        # Normalize weights.
+        weights = weights / torch.sum( weights )
+        _last_normalized_weights = sub.block
+
+        bt.logging.trace("Weights:")
+        bt.logging.trace(weights)
+
+        _has_set = False
+        _retries = 0
+        while _has_set == False:
+            try:
+                _uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+                    uids = meta.uids,
+                    weights = weights,
+                    netuid = config.netuid,
+                    subtensor = sub,
+                )
+                sub.set_weights(
+                    wallet = wallet,
+                    netuid = config.netuid,
+                    weights = processed_weights,
+                    uids = _uids,
+                )
+                _has_set = True
+            except Exception as e:
+                _sleep_time = 2 ** _retries
+                _sleep_time = 30 if _sleep_time > 30 else _sleep_time
+                bt.logging.warning(f"Error setting weights: {e} retrying in {_sleep_time} seconds")
+                sleep(_sleep_time)
+                continue
+        last_updated_block = current_block
+
+        # delete_prompts_by_timestamp for timestamps older than 48h
+        delete_prompts_by_timestamp(conn, time.time() - 172800)
+
+        check_for_updates()
+    elif sub.block - _last_normalized_weights >= 25:
+        # Normalize weights.
+        weights = weights / torch.sum( weights )
+        _last_normalized_weights = sub.block
+        bt.logging.trace("25 blocks have passed, normalizing weights")
+
+    ### END SET WEIGHTS SECTION ###
+
+
+    # use rand int to select int between 1-10
+    randomint = random.randint(1, 10)
+    if randomint == 1 and False: # Disabled for now
+        # get batch between 48h ago and now
+        prompts = get_prompts_of_random_batch(conn, time.time() - 172800)
+
+        # if prompts is none, skip block
+        if prompts is None:
+            return
+
+
+        # uids
+        dendrites_to_query = [prompt.uid for prompt in prompts]
+        bt.logging.trace(f"Querying {len(dendrites_to_query)} dendrites with requery")
+        # if len of dend is 0 warn and skip block
+        if len(dendrites_to_query) == 0:
+            bt.logging.warning("No dendrites to query, skipping block")
+            return
+
+        rewards = torch.zeros( len(dendrites_to_query), dtype = torch.float32 )
+        # create a dictionary where the key is the uid and the value is a list of prompts for that uid sorted in the order of image_order_Id
+        prompts_dict = {}
+        for prompt in prompts:
+            if prompt.uid not in prompts_dict:
+                prompts_dict[prompt.uid] = []
+            prompts_dict[prompt.uid].append(prompt)
+        for uid in prompts_dict:
+            prompts_dict[uid] = sorted(prompts_dict[uid], key=lambda x: x.image_order_id)
+
+        # get the maximum number of images for any uid
+        prompts = [len(prompts_dict[uid]) for uid in prompts_dict]
+
+        if len(prompts) == 0:
+            bt.logging.warning("No prompts found, skipping block")
+            return
+
+        maximum_number_of_images = max(prompts)
+
+        # recreate the query from the prompt
+        query = TextToImage(
+            text = prompts[0].prompt,
+            num_images_per_prompt = maximum_number_of_images,
+            height = prompts[0].height,
+            width = prompts[0].width,
+            negative_prompt = prompts[0].negative,
+            nsfw_allowed=config.validator.allow_nsfw,
+            seed=prompts[0].seed,
+        )
+
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
+
+        hashes = GetImageHashesOfResponses(responses)
+
+        # hashes is a 2d array where the first dimension corelates with the order of responses/uids queried, the second is the hash in the order of images supplied
+
+        # loop through hashes and check to see if they match the hash of the original prompts object
+
+        # loop through all the hashes
+        for i, _hashes in enumerate(hashes):
+            # loop through all the hashes for that uid
+            uid = dendrites_to_query[i]
+            for j, _hash in enumerate(_hashes):
+                # if the hash matches the original prompt hash, set the reward to 0
+                current_reward = rewards[dendrites_to_query.index(uid)]
+                # check if j exists in prompts_dict[uid]
+                if j < len(prompts_dict[uid]):
+                    if _hash == prompts_dict[uid][j].hash_value:
+                        if current_reward == 0:
+                            rewards[dendrites_to_query.index(uid)] = 1
+                    else:
+                        rewards[dendrites_to_query.index(uid)] = -1
+                else:
+                    pass
+
+        # set all rewards less than 0 to 0
+        rewards[rewards < 0] = 0
+
+        # if sum of rewards is 0, skip block
+        if torch.sum( rewards ) == 0:
+            weights = weights * 0.993094
+            return
+        
+        # skip normalization
+
+        # extend the rewards matrix out to the entire length of uids so it can be added into weights
+        rewards = ExtendRewardMatrixToUidsLength(uids, dendrites_to_query, rewards)
+
+        # because we don't normalize we need to add a scaling factor additional to that of alpha
+        scaling = 0.075
+
+        weights = weights + alpha * rewards * scaling
+
+        # every loop scale weights by 0.993094, sets half life to 100 blocks
+        weights = weights * 0.993094
+
+    else:
+
+        ### TEXT TO IMAGE SECTION ###
+
+        _, prompt = GeneratePrompt()
+
+        (width, height) = get_resolution()
+
+        # Create the query.
+        query = TextToImage(
+            text = prompt,
+            num_images_per_prompt = num_images,
+            height = height,
+            width = width,
+            negative_prompt = "",
+            nsfw_allowed=config.validator.allow_nsfw,
+            seed=random.randint(0, 1e9)
+        )
+
+        batch_id = create_batch(conn, time.time())
+
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
+
+        rewards, hashes, best_pil_image, best_image_hash = ScoreTextToImage(responses, batch_id, query, dendrites_to_query)
+
+        # if sum of rewards is 0, skip block
+        if torch.sum( rewards ) == 0:
+            bt.logging.trace("All rewards are 0, skipping block")
+            weights = weights * 0.993094
+            return
+
+        # extend the rewards matrix out to the entire length of uids so it can be added into weights
+        rewards = ExtendRewardMatrixToUidsLength(uids, dendrites_to_query, rewards)
+
+        weights = weights + alpha * rewards
+
+        prompt = query.text
+
+        if best_pil_image is None:
+            bt.logging.warning("No best image found in text to image batch, skipping image to image")
+            weights = weights * 0.993094
+            return
+
+        ### END TEXT TO IMAGE SECTION ###
+
+
+
+        ### IMAGE TO IMAGE SECTION ###
+
+        similarities = ["low", "medium", "high"]
+
+        serialized_best_image = bt.Tensor.serialize(transform(best_pil_image))
+
+        # Create ImageToImage query
+        i2i_query = ImageToImage(
+            image = serialized_best_image,
+            height = best_pil_image.height,
+            width = best_pil_image.width,
+            negative_prompt = "",
+            # do a 5050 chance of using the prompt or just empty string
+            text = prompt if random.randint(0, 1) == 0 else "",
+            nsfw_allowed=config.validator.allow_nsfw,
+            seed=random.randint(0, 1e9),
+            similarity = similarities[random.randint(0, len(similarities)-1)]
+        )
+
+        batch_id = create_batch(conn, time.time())
+
+        i2i_rewards, i2i_responses, dendrites_to_query = await AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id)
+
+        # if sum of rewards is 0, skip block
+        if torch.sum( i2i_rewards ) == 0 or torch.max( i2i_rewards ) == 0:
+            weights = weights * 0.993094
+            return
+
+        i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
+
+        
+        # loop through all images and remove black images
+        SaveImages(dendrites_to_query, prompt, i2i_query, i2i_responses, i2i_rewards)
+
+        # reorder rewards to match dendrites_to_query
+        _rewards = torch.zeros( len(uids), dtype = torch.float32 )
+        for i, uid in enumerate(dendrites_to_query):
+            if not torch.isnan(i2i_rewards[i]):
+                _rewards[uids.index(uid)] = i2i_rewards[i]
+            else:
+                bt.logging.warning(f"Reward for uid {uid} is nan (326)! This should not be the case!")
+        i2i_rewards = _rewards
+        
+        weights = weights + alpha * i2i_rewards
+
+        ### END IMAGE TO IMAGE SECTION ###
+
+
+    ### WEIGHT MANAGEMENT SECTION ###
+
+    # every loop scale weights by 0.993094, sets half life to 100 blocks
+    weights = weights * 0.993094
+
+    # hard set weights with 1024 stake to 0
+    weights[meta.total_stake > 1.024e3] = 0
+
+    # if weight is less than 1/2048, set it to 0
+    weights[weights < 1/2048] = 0
+
+    ### END WEIGHT MANAGEMENT SECTION ###
+
+    _loop += 1
+    bt.logging.trace(f"Finished with loop {_loop} at block {sub.block}, { 100 - (sub.block - last_updated_block) } blocks until weights are updated")
+
+### END MAIN FUNCTION ###
+
+async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id):
+    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
+
+    timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
+
+    dendrites_to_query = GetDendritesToQuery(uids, queryable_uids, dendrites_per_query)
+
+    # Get response from endpoints
+    i2i_responses = await dendrite_pool.async_forward(
+        uids = dendrites_to_query,
+        query = i2i_query,
+        timeout = timeout * timeout_increase
+    )
+
+    SetDendritesLastQueried(dendrites_to_query)
+
+    dendrites_to_query, i2i_responses = CheckForNSFW(dendrites_to_query, i2i_responses)
+
+    i2i_rewards, _, _, _ = CalculateRewards(dendrites_to_query, batch_id, prompt, i2i_query, i2i_responses, best_image_hash)
+
+    return i2i_rewards, i2i_responses, dendrites_to_query
+
+async def AsyncQueryTextToImage(all_uids, query):
+    global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
+
+    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(all_uids)
+
+    timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
+
+    dendrites_to_query = GetDendritesToQuery(all_uids, queryable_uids, dendrites_per_query)
+
+    # total pixels
+    total_pixels = query.width * query.height
+
+    base_timeout = 12
+    base_timeout_size = 512*512
+
+    max_timeout = 30
+
+    
+    # calculate timeout based on size of image, image size goes up quadraticly but timeout goes up linearly, so if you go from 512,512 -> 1024,1024, the timeout should be 3x
+    timeout = CalculateTimeout(total_pixels, base_timeout, base_timeout_size, max_timeout)
+
+    # Get response from endpoint.
+    responses = await dendrite_pool.async_forward(
+        uids = dendrites_to_query,
+        query = query,
+        timeout = timeout * timeout_increase
+    )
+
+    # for each queried uid, set the last queried time to now
+    SetDendritesLastQueried(dendrites_to_query)
+
+    return query, timeout, responses, dendrites_to_query
+
+def ScoreTextToImage(responses, batch_id, query, dendrites_to_query):
+    # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
+    dendrites_to_query, responses = ValidateResponses(dendrites_to_query, responses)
+
+    dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
+
+    rewards, hashes, best_pil_image,best_image_hash = CalculateRewards(dendrites_to_query, batch_id, query.text, query, responses)
+    
+    return rewards, hashes, best_pil_image,best_image_hash
+
+def load_and_preprocess_image_array(image_array, target_size):
+    image_transform = transforms.Compose([
+        transforms.Resize(target_size),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    preprocessed_images = []
+    for image in image_array:
+        if(image is None):
+            preprocessed_images.append(None)
+            continue
+        image = image_transform(image).unsqueeze(0)
+        preprocessed_images.append(image)
+
+    return torch.cat(preprocessed_images, dim=0)
 
 def get_resolution(size_index = None, aspect_ratio_index = None):
     # pick a random size and aspect ratio
@@ -125,28 +502,6 @@ def get_resolution(size_index = None, aspect_ratio_index = None):
 
     return (width, height)
 
-
-# Init the validator weights.
-alpha = 0.0001
-# weights = torch.rand_like( meta.uids, dtype = torch.float32 )
-weights = torch.ones_like( meta.uids , dtype = torch.float32 )
-
-# multiply weights by the active tensor
-curr_block = sub.block
-
-# loop over all last_update, any that are within 600 blocks are set to 1 others are set to 0 
-weights = weights * meta.last_update > curr_block - 600
-
-# all nodes with more than 1e3 total stake are set to 0 (sets validtors weights to 0)
-weights = weights * (meta.total_stake < 1.024e3) 
-
-# set all nodes without ips set to 0
-weights = weights * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in meta.uids]) * 0.5
-
-last_updated_block = curr_block - (curr_block % 100)
-last_reset_weights_block = curr_block
-
-
 def add_black_border(image, border_size):
     # Create a new image with the desired dimensions
     new_width = image.width
@@ -158,161 +513,91 @@ def add_black_border(image, border_size):
     
     return new_image
 
+def ExtendRewardMatrixToUidsLength(all_uids, dendrites_to_query, rewards):
+    _rewards = torch.zeros( len(all_uids), dtype = torch.float32 )
+    for i, uid in enumerate(dendrites_to_query):
+        # check if rewards[i] is nan
+        if not torch.isnan(rewards[i]):
+            _rewards[all_uids.index(uid)] = rewards[i]
+        else:
+            bt.logging.warning(f"Reward for uid {uid} is nan! This should not be the case!")
+    rewards = _rewards
+    return rewards
 
-safetychecker = StableDiffusionSafetyChecker.from_pretrained('CompVis/stable-diffusion-safety-checker').to( DEVICE )
-processor = CLIPImageProcessor()
+def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, best_image_hash = None):
+    (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
 
-# find DejaVu Sans font
-if (config.validator.label_images == True):
-    fonts = get_system_fonts()
-    dejavu_font = None
-    for font in fonts:
-        if "DejaVu" in font:
-            dejavu_font = font
-            break 
-
-    default_font = ImageFont.truetype(dejavu_font, 30)
-
-async def main():
-    global weights, last_updated_block, last_reset_weights_block
-    # every 10 blocks, sync the metagraph.
-    if sub.block % 10 == 0:
-        # create old list of (uids, hotkey)
-        old_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
-        meta.sync(subtensor = sub, )
-        # create new list of (uids, hotkey)
-        new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
-        # if the lists are different, reset weights for that uid
-        for i in range(len(old_uids)):
-            if old_uids[i] != new_uids[i]:
-                weights[i] = 0.3 * torch.median( weights[weights != 0] )
-
-    uids = meta.uids.tolist() 
-
-    # if uids is longer than weight matrix, then we need to add more weights.
-    if len(uids) > len(weights):
-        bt.logging.trace("Adding more weights")
-        size_difference = len(uids) - len(weights)
-        new_weights = torch.zeros( size_difference, dtype = torch.float32 )
-        # the new weights should be 0.3 * the median of all non 0 weights
-        new_weights = new_weights + 0.3 * torch.median( weights[weights != 0] )
-        weights = torch.cat( (weights, new_weights) )
-        del new_weights
-
-    bt.logging.trace('uids')
-    bt.logging.trace(uids)
-
-    # Select up to dendrites_per_query random dendrites.
-    queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
-
-    # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
-    queryable_uids = queryable_uids * torch.Tensor([meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids])
-
-    active_miners = torch.sum(queryable_uids)
-    dendrites_per_query = total_dendrites_per_query
-
-    # if there are no active miners, set active_miners to 1
-    if active_miners == 0:
-        active_miners = 1
-
-    # if there are less than dendrites_per_query * 3 active miners, set dendrites_per_query to active_miners / 3
-    if active_miners < total_dendrites_per_query * 3:
-        dendrites_per_query = int(active_miners / 3)
-    else:
-        dendrites_per_query = total_dendrites_per_query
-
-    # less than 1 set to 1
-    if dendrites_per_query < minimum_dendrites_per_query:
-        dendrites_per_query = minimum_dendrites_per_query
-
-    timeout_increase = 1
-
-    if dendrites_per_query > active_miners:
-        bt.logging.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
-    elif active_miners < dendrites_per_query * 3:
-        bt.logging.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
-        timeout_increase = 2
-
-    # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
-    zipped_uids = list(zip(uids, queryable_uids))
-    filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
-    dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
-
-    # Generate a random synthetic prompt. cut to first 20 characters.
-    try:
-        initial_prompt = next(dataset)['prompt']
-    except:
-        seed=random.randint(0, 1000000)
-        dataset = iter(load_dataset("poloclub/diffusiondb")['train'].shuffle(seed=seed).to_iterable_dataset())
-        initial_prompt = next(dataset)['prompt']
-    # split on spaces
-    initial_prompt = initial_prompt.split(' ')
-    # pick a random number of words to keep
-    keep = random.randint(1, len(initial_prompt))
-    # max of 6 words
-    keep = min(keep, 6)
-    # keep the first keep words
-    initial_prompt = ' '.join(initial_prompt[:keep])
-    prompt = prompt_generation_pipe( initial_prompt, min_length=30 )[0]['generated_text']
-
-    bt.logging.trace(f"Inital prompt: {initial_prompt}\nPrompt: {prompt}\n")
-
-    (width, height) = get_resolution()
-
-    # Create the query.
-    query = TextToImage(
-        text = prompt,
-        num_images_per_prompt = num_images,
-        height = height,
-        width = width,
-        negative_prompt = "",
-        nsfw_allowed=config.validator.allow_nsfw,
-        seed=random.randint(0, 1e9)
-    )
-
-    # total pixels
-    total_pixels = query.height * query.width
-
-    base_timeout = 12
-    base_timeout_size = 512*512
-
-    max_timeout = 30
-
-    # calculate timeout based on size of image, image size goes up quadraticly but timeout goes up linearly, so if you go from 512,512 -> 1024,1024, the timeout should be 3x
-    if (total_pixels / base_timeout_size) > 1:
-        timeout = base_timeout * (total_pixels / base_timeout_size) * 0.75
-    else:
-        timeout = base_timeout
-    # if timeout is greater than max timeout, set it to max timeout
-    if timeout > max_timeout:
-        timeout = max_timeout
-
-    # increase timeout for multiple images
-    if (num_images > 1):
-        timeout = timeout * (num_images*(2/3))
-
-    bt.logging.trace("Calling dendrite pool")
-    bt.logging.trace(f"Query: {query.text}")
-    bt.logging.trace("Dendrites:")
-    bt.logging.trace(dendrites_to_query)
-
-    # Get response from endpoint.
-    responses = await dendrite_pool.async_forward(
-        uids = dendrites_to_query,
-        query = query,
-        timeout = timeout * timeout_increase
-    )
-
-    # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
-    for i, response in enumerate(responses):
-        valid, error = validate_synapse(response)
-        if not valid:
-            bt.logging.trace(f"Detected invalid response from dendrite {dendrites_to_query[i]}: {error}")
-            del responses[i]
-            del dendrites_to_query[i]
-
+    if torch.sum( rewards ) == 0:
+        return rewards, [], None, None
     
+    rewards = rewards / torch.max(rewards)
 
+    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( best_images )
+
+    # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
+    new_dissimilarity_rewards = torch.zeros( len(rewards), dtype = torch.float32 )
+
+    for i, reward in enumerate(rewards):
+        if reward != 0:
+            new_dissimilarity_rewards[i] = dissimilarity_rewards[i]
+
+    dissimilarity_rewards = new_dissimilarity_rewards
+
+    dissimilarity_rewards = dissimilarity_rewards / torch.max(dissimilarity_rewards)
+
+    # my goal with dissimilarity_rewards is to encourage diversity in the images
+
+    # normalize rewards such that the highest value is 1
+
+    dissimilarity_weight = 0.15
+    rewards = rewards + dissimilarity_weight * dissimilarity_rewards
+
+    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
+    hash_rewards, hashes = ImageHashRewards(dendrites_to_query, responses, rewards)
+    bt.logging.trace(f"Hash rewards: {hash_rewards}")
+    
+    # add hashes to the database
+    for i, _hashes in enumerate(hashes):
+        try:
+            resp = responses[i] # TextToImage class
+            uid = dendrites_to_query[i]
+            for _hash in _hashes:
+                hash_already_exists = create_prompt(conn, batch_id, _hash, uid, prompt, "", resp.seed, resp.height, resp.width, time.time(), best_image_hash)
+                if hash_already_exists:
+                    bt.logging.trace(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
+                    hash_rewards[i] = 0
+        except Exception as e:
+            bt.logging.trace(f"Error in imagehash: {e}") if best_image_hash is None else bt.logging.trace(f"Error in i2i imagehash: {e}")
+            print(e)
+            pass
+    
+    # multiply rewards by hash rewards
+    rewards = rewards * hash_rewards
+
+    if torch.sum( rewards ) == 0:
+        return rewards, hashes, None, None
+
+    # get best image from rewards
+    best_image_index = torch.argmax(rewards)
+    best_pil_image = best_images[best_image_index]
+    if len(hashes[best_image_index]) == 0:
+        return rewards, hashes, None, None
+    best_image_hash = hashes[best_image_index][0]
+    
+    rewards = rewards / torch.max(rewards)
+
+     # log uids
+    bt.logging.trace(f"UIDs: {dendrites_to_query}")
+    # log all rewards and the best image index / hash
+    bt.logging.trace(f"Calculated Rewards: {rewards}")
+    # log best score
+    bt.logging.trace(f"Best score: {torch.max(rewards)} UID: {dendrites_to_query[best_image_index]} HASH: {best_image_hash}")
+
+    return rewards,hashes,best_pil_image,best_image_hash
+
+
+
+def CheckForNSFW(dendrites_to_query, responses):
     if not config.validator.allow_nsfw:
         for i, response in enumerate(responses):
             # delete all none images
@@ -337,243 +622,145 @@ async def main():
                 print(response.images)
                 bt.logging.trace(f"Error in NSFW detection: {e}")
                 pass
-
-    (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
-    rewards = rewards / torch.max(rewards)
-
-    # zip rewards and images together, then filter out all images which have a reward of 0
-    zipped_rewards = list(zip(rewards, best_images))
-    filtered_rewards = list(zip(*filter(lambda x: x[0] != 0, zipped_rewards)))
-    # get back images
-    filtered_best_images = filtered_rewards[1]
-
-    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( filtered_best_images )
-
-    # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
-    new_dissimilarity_rewards = torch.zeros( len(rewards), dtype = torch.float32 )
-    y = 0
-    for i, reward in enumerate(rewards):
-        if reward != 0:
-            new_dissimilarity_rewards[i] = dissimilarity_rewards[y]
-            y+=1
-
-    dissimilarity_rewards = new_dissimilarity_rewards
-
-    dissimilarity_rewards = dissimilarity_rewards / torch.max(dissimilarity_rewards)
-
-    # my goal with dissimilarity_rewards is to encourage diversity in the images
-
-    # normalize rewards such that the highest value is 1
-
-    dissimilarity_weight = 0.15
-    rewards = rewards + dissimilarity_weight * dissimilarity_rewards
-
-    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
-    hash_rewards, hashes = ImageHashRewards(dendrites_to_query, responses, rewards)
     
-    # add hashes to the database
-    for i, _hashes in enumerate(hashes):
-        try:
-            resp = responses[i] # TextToImage class
-            for _hash in _hashes:
-                hash_already_exists = create_prompt(conn, _hash, prompt, "", resp.seed, resp.height, resp.width, time.time())
-                if hash_already_exists:
-                    bt.logging.trace(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
-                    # set the reward * 0.5
-                    hash_rewards[i] = hash_rewards[i] * 0.5
-        except Exception as e:
-            bt.logging.trace(f"Error in imagehash: {e}")
-            pass
-    
-    # multiply rewards by hash rewards
-    rewards = rewards * hash_rewards
+    return dendrites_to_query, responses
 
-    rewards = rewards / torch.max(rewards)
-
-    # find best image
-    best_image_index = torch.argmax(rewards)
-    best_image = responses[best_image_index].images[0]
-    best_image_hash = hashes[best_image_index][0]
-
-    similarities = ["low", "medium", "high"]
-
-    # Create ImageToImage query
-    i2i_query = ImageToImage(
-        image = best_image,
-        height = height,
-        width = width,
-        negative_prompt = "",
-        text = prompt,
-        nsfw_allowed=config.validator.allow_nsfw,
-        seed=random.randint(0, 1e9),
-        similarity = similarities[random.randint(0, len(similarities)-1)]
-    )
-
-    # Get response from endpoints
-    i2i_responses = await dendrite_pool.async_forward(
-        uids = dendrites_to_query,
-        query = i2i_query,
-        timeout = timeout * timeout_increase
-    )
-
-    # validate responses
-    for i, response in enumerate(i2i_responses):
+def ValidateResponses(dendrites_to_query, responses):
+    for i, response in enumerate(responses):
         valid, error = validate_synapse(response)
         if not valid:
             bt.logging.trace(f"Detected invalid response from dendrite {dendrites_to_query[i]}: {error}")
-            del i2i_responses[i]
+            del responses[i]
             del dendrites_to_query[i]
-        
-    if not config.validator.allow_nsfw:
-        for i, response in enumerate(i2i_responses):
-            # delete all none images
-            for j, image in enumerate(response.images):
-                if image is None:
-                    del i2i_responses[i].images[j]
-            if len(response.images) == 0:
-                continue
+    
+    return dendrites_to_query, responses
+
+def CalculateTimeout(total_pixels, base_timeout, base_timeout_size, max_timeout):
+    if (total_pixels / base_timeout_size) > 1:
+        timeout = base_timeout * (total_pixels / base_timeout_size) * 0.75
+    else:
+        timeout = base_timeout
+    # if timeout is greater than max timeout, set it to max timeout
+    if timeout > max_timeout:
+        timeout = max_timeout
+
+    # increase timeout for multiple images
+    if (num_images > 1):
+        timeout = timeout * (num_images*(2/3))
+    return timeout
+
+def ExtendWeightMatrixIfNeeded(uids):
+    global weights
+    if len(uids) > len(weights):
+        bt.logging.trace("Adding more weights")
+        size_difference = len(uids) - len(weights)
+        new_weights = torch.zeros( size_difference, dtype = torch.float32 )
+        # the new weights should be 0.3 * the median of all non 0 weights
+        new_weights = new_weights + 0.3 * torch.median( weights[weights != 0] )
+        weights = torch.cat( (weights, new_weights) )
+        del new_weights
+
+def SyncMetagraphIfNeeded():
+    global sub, meta, weights
+
+    # every 10 blocks, sync the metagraph.
+    if sub.block % 10 == 0:
+        # create old list of (uids, hotkey)
+        old_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
+        _retries = 0
+        _not_synced = True
+        while _not_synced:
             try:
-                clip_input = processor([bt.Tensor.deserialize(image) for image in response.images], return_tensors="pt").to( DEVICE )
-                images, has_nsfw_concept = safetychecker.forward(images=response.images, clip_input=clip_input.pixel_values.to( DEVICE ))
+                meta.sync(subtensor = sub, )
+                _not_synced = False
+                # create new list of (uids, hotkey)
+                new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
+                # if the lists are different, reset weights for that uid
+                for i in range(len(new_uids)):
+                    if len(old_uids) > i:
+                        if old_uids[i] != new_uids[i]:
+                            weights[i] = 0.3 * torch.median( weights[weights != 0] )
+                            
+                            # delete all prompts for that uid
+                            delete_prompts_by_uid(conn, new_uids[i][0])
+                    else:
+                        weights[i] = 0.3 * torch.median( weights[weights != 0] )
+            except:
+                _retries += 1
+                _seconds_to_wait = 2 ** _retries
+                if _seconds_to_wait > 30:
+                    _seconds_to_wait = 30
+                bt.logging.trace("Error in syncing metagraph... retrying in {} seconds".format(_seconds_to_wait))
+                time.sleep(_seconds_to_wait)
 
-                any_nsfw = any(has_nsfw_concept)
-                if any_nsfw:
-                    bt.logging.warning(f"Detected NSFW image(s) from dendrite {dendrites_to_query[i]}")
+def SetDendritesLastQueried(dendrites_to_query):
+    global last_queried
+    for uid in dendrites_to_query:
+        last_queried[uid] = datetime.datetime.now()
 
-                # remove all nsfw images from the response
-                for j, has_nsfw in enumerate(has_nsfw_concept):
-                    if has_nsfw:
-                        del i2i_responses[i].images[j]
-            except Exception as e:
-                print(response.images)
-                bt.logging.error(f"Error in NSFW detection: {e}")
-                pass
-    
-    # calculate rewards for prompt alignment
-    (i2i_rewards, best_images) = calculate_rewards_for_prompt_alignment( i2i_query, i2i_responses )
-    i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
+    return last_queried
 
-    # zip rewards and images together, then filter out all images which have a reward of 0
-    zipped_rewards = list(zip(i2i_rewards, best_images))
-    filtered_rewards = list(zip(*filter(lambda x: x[0] != 0, zipped_rewards)))
-    # get back images
-    filtered_best_images = filtered_rewards[1]
-    
-    # calculate dissimilarity rewards
-    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( filtered_best_images )
+def GetTimeoutIncrease(active_miners, dendrites_per_query):
+    timeout_increase = 1
 
-    # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
-    new_dissimilarity_rewards = torch.zeros( len(i2i_rewards), dtype = torch.float32 )
-    y = 0
-    for i, reward in enumerate(i2i_rewards):
-        if reward != 0:
-            new_dissimilarity_rewards[i] = dissimilarity_rewards[y]
-            y+=1
-    
-    dissimilarity_rewards = new_dissimilarity_rewards
+    if dendrites_per_query > active_miners:
+        bt.logging.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
+    elif active_miners < dendrites_per_query * 3:
+        bt.logging.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
+        timeout_increase = 2
+    return timeout_increase
 
-    dissimilarity_rewards = dissimilarity_rewards / torch.max(dissimilarity_rewards)
+def GetDendritesToQuery(uids, queryable_uids, dendrites_per_query):
+    # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
+    zipped_uids = list(zip(uids, queryable_uids))
+    filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
+    dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
+    return dendrites_to_query
 
-    dissimilarity_weight = 0.15
-    i2i_rewards = i2i_rewards + dissimilarity_weight * dissimilarity_rewards
+def GetQueryableUids(uids):
+    # Select up to dendrites_per_query random dendrites.
+    queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
 
-    # Perform imagehash (perceptual hash) on all images. Any matching images are given a reward of 0.
-    hash_rewards, hashes = ImageHashRewards(dendrites_to_query, i2i_responses, i2i_rewards)
+    # if queryable_uids doesnt match the length of meta.neurons, extend it
 
-    # add hashes to the database
-    for i, _hashes in enumerate(hashes):
-        try:
-            resp = i2i_responses[i] # ImageToImage class
-            for _hash in _hashes:
-                # check if hash is best_image_hash, if so, set reward to 0 and skip adding to database
-                if _hash == best_image_hash:
-                    hash_rewards[i] = 0
-                    bt.logging.warning(f"Miner {dendrites_to_query[i]} submitted image that matches the original image, setting reward to 0")
-                    continue
-                hash_already_exists = create_prompt(conn, _hash, prompt, best_image_hash, resp.seed, resp.height, resp.width, time.time(), best_image_hash)
-                if hash_already_exists:
-                    bt.logging.warning(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
-                    # set the reward * 0.5
-                    hash_rewards[i] = hash_rewards[i] * 0.5
-        except Exception as e:
-            bt.logging.error(f"Error in imagehash of img2img: {e}")
-            pass
-    
-    # multiply rewards by hash rewards
-    i2i_rewards = i2i_rewards * hash_rewards
+    # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
+    non_zero_ips = [meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids]
+    queryable_uids = queryable_uids = queryable_uids[:len(non_zero_ips)] * torch.Tensor(non_zero_ips[:len(queryable_uids)])
 
-    i2i_rewards = i2i_rewards / torch.max(i2i_rewards)
+    # loop through queryable uids and check if if they have been queried in the last 2 minutes, if so, set queryable_uids[uid] to 0
+    for uid in uids:
+        if uid in last_queried:
+            if (datetime.datetime.now() - last_queried[uid]).total_seconds() < 120:
+                queryable_uids[uids.index(uid)] = 0
 
-    # Add i2i_rewards to rewards
-    rewards = rewards + i2i_rewards
+    active_miners = torch.sum(queryable_uids)
+    dendrites_per_query = total_dendrites_per_query
 
-    # normalize rewards such that the highest value is 1
-    rewards = rewards / torch.max(rewards)
+    # if there are no active miners, set active_miners to 1
+    if active_miners == 0:
+        active_miners = 1
 
-    bt.logging.trace("Rewards:")
-    bt.logging.trace(rewards)
-    
-    if torch.sum( rewards ) == 0:
-        bt.logging.trace("All rewards are 0, skipping block")
-        return
-    
+    # if there are less than dendrites_per_query * 3 active miners, set dendrites_per_query to active_miners / 3
+    if active_miners < total_dendrites_per_query * 3:
+        dendrites_per_query = int(active_miners / 3)
+    else:
+        dendrites_per_query = total_dendrites_per_query
 
-    
-    # loop through all images and remove black images
-    SaveImages(dendrites_to_query, prompt, query, responses, rewards)
+    # less than 1 set to 1
+    if dendrites_per_query < minimum_dendrites_per_query:
+        dendrites_per_query = minimum_dendrites_per_query
+    return queryable_uids,active_miners,dendrites_per_query
 
-    # reorder rewards to match dendrites_to_query
-    _rewards = torch.zeros( len(uids), dtype = torch.float32 )
-    for i, uid in enumerate(dendrites_to_query):
-        _rewards[uids.index(uid)] = rewards[i]
-    rewards = _rewards
-    
-    weights = weights + alpha * rewards
+# find DejaVu Sans font
+if (config.validator.label_images == True):
+    fonts = get_system_fonts()
+    dejavu_font = None
+    for font in fonts:
+        if "DejaVu" in font:
+            dejavu_font = font
+            break 
 
-    # every loop scale weights by 0.993094, sets half life to 100 blocks
-    weights = weights * 0.993094
-
-    # hard set weights with 1024 stake to 0
-    weights[meta.total_stake > 1.024e3] = 0
-    
-
-    # Optionally set weights
-    current_block = sub.block
-    if current_block - last_updated_block  >= 100:
-        bt.logging.trace(f"Setting weights")
-
-         # Normalize weights.
-        weights = weights / torch.sum( weights )
-        
-        # TODO POTENTIALLY ADD THIS IN LATER
-        # any weights higher than (1 / len(weights)) * 10 are set to (1 / len(weights)) * 10
-        # scale_max = (1 / len(weights)) * (len(weights) * 0.0390625)
-        # weights[weights > scale_max] = scale_max 
-
-        # # normalize again
-        # weights = weights / torch.sum( weights )
-
-        bt.logging.trace("Weights:")
-        bt.logging.trace(weights)
-
-        uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
-            uids = meta.uids,
-            weights = weights,
-            netuid = config.netuid,
-            subtensor = sub,
-        )
-        sub.set_weights(
-            wallet = wallet,
-            netuid = config.netuid,
-            weights = processed_weights,
-            uids = uids,
-        )
-        last_updated_block = current_block
-
-        # delete_prompts_by_timestamp for timestamps older than 48h
-        delete_prompts_by_timestamp(conn, time.time() - 172800)
-
-        check_for_updates()
+    default_font = ImageFont.truetype(dejavu_font, 30)
 
 def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
     # if save images is true, save the images to a folder
@@ -636,7 +823,6 @@ def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
         with open(f"images/{sub.block}.txt", "w") as f:
             f.write(prompt)
 
-
 def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTensor, List[ str ]):
     hashmap = {}
     hashes = []
@@ -645,31 +831,59 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
         images = response.images
         uid = dendrites_to_query[i]
         hashes.append([])
+        # if rewards is 0 set hash_reward to 0
+        if rewards[i] == 0:
+            hash_rewards[i] = 0
+            for j in enumerate(images):
+                hashes[i].append(None)
+            continue
         for j, image in enumerate(images):
             try:
                 img = bt.Tensor.deserialize(image)
             except:
                 bt.logging.trace(f"Detected invalid image to deserialize from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
             if img.sum() == 0:
                 bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
+                hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
 
             bt.logging.trace(f"Processing dendrite {uid} for image hash")
             # convert img to PIL image
             hash = imagehash.phash( transforms.ToPILImage()( img ) )
+            hash = str(hash)
             if hash in hashmap:
                 bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
-                hash_rewards[i] = hash_rewards[i] * 0.75
-                hash_rewards[hashmap[hash]] = hash_rewards[hashmap[hash]] * 0.75
+                hash_rewards[i] = 0
+                hash_rewards[hashmap[hash]] = 0
             else:
                 hashmap[hash] = i
             hashes[i].append(hash)
     return hash_rewards, hashes
+
+def GetImageHashesOfResponses(responses):
+    hashes = []
+    for i, response in enumerate(responses):
+        images = response.images
+        hashes.append([])
+        for j, image in enumerate(images):
+            try:
+                img = bt.Tensor.deserialize(image)
+            except:
+                hashes[i].append(None)
+                continue
+            if img.sum() == 0:
+                hashes[i].append(None)
+                continue
+
+            # convert img to PIL image
+            hash = imagehash.phash( transforms.ToPILImage()( img ) )
+            hash = str(hash)
+            hashes[i].append(hash)
+    return hashes
 
 async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
     synapse._version = __version__

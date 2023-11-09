@@ -8,6 +8,7 @@ import requests
 import bittensor as bt
 import sys
 import argparse
+import random
 
 from typing import List
 from protocol import TextToImage
@@ -15,10 +16,23 @@ from PIL import Image
 
 import torchvision.models as models
 
+import matplotlib.font_manager as fm
+
 parser = argparse.ArgumentParser()
-parser.add_argument('--no-restart', type=bool, default=False)
+parser.add_argument('--no-restart', action="store_true", help='Do not restart after update')
 
 config = bt.config( parser )
+
+# Load prompt dataset.
+from datasets import load_dataset
+# generate random seed
+seed=random.randint(0, 1000000)
+dataset = iter(load_dataset("poloclub/diffusiondb")['train'].shuffle(seed=seed).to_iterable_dataset())
+
+# For prompt generation
+from transformers import pipeline
+prompt_generation_pipe = pipeline("text-generation", model="succinctly/text2image-prompt-generator")
+
 
 transform = transforms.Compose([
     transforms.PILToTensor()
@@ -35,10 +49,14 @@ total_dendrites_per_query = 25
 minimum_dendrites_per_query = 3
 
 import ImageReward as RM
+scoring_model = None
 def get_scoring_model(_config: bt.config = None ):
-    return RM.load("ImageReward-v1.0", device=_config.device if (_config is not None and _config.device is not None) else ("cuda" if torch.cuda.is_available() else "cpu"))
+    global scoring_model
+    if scoring_model is None:
+        scoring_model = RM.load("ImageReward-v1.0", device=_config.device if (_config is not None and _config.device is not None) else ("cuda" if torch.cuda.is_available() else "cpu"))
+    return scoring_model
 
-scoring_model = get_scoring_model(config)
+
 
 
 def cosine_distance(image_embeds, text_embeds):
@@ -191,7 +209,7 @@ def calculate_rewards_for_prompt_alignment(query: TextToImage, responses: List[ 
 
                     images.append(image)
                 
-                ranking, scores = scoring_model.inference_rank(query.text, images)
+                ranking, scores = get_scoring_model(config).inference_rank(query.text, images)
                 img_scores = torch.tensor(scores)
                 # push top image to images (i, image)
                 if len(images) > 1:
@@ -359,3 +377,24 @@ def calculate_mean_similarity(dissimilarity_matrix):
     #     mean_dissimilarities = [value / sum_values for value in mean_dissimilarities]
 
     return mean_dissimilarities
+
+def GeneratePrompt():
+    global dataset
+    
+    # Generate a random synthetic prompt. cut to first 20 characters.
+    try:
+        initial_prompt = next(dataset)['prompt']
+    except:
+        seed=random.randint(0, 1000000)
+        dataset = iter(load_dataset("poloclub/diffusiondb")['train'].shuffle(seed=seed).to_iterable_dataset())
+        initial_prompt = next(dataset)['prompt']
+    # split on spaces
+    initial_prompt = initial_prompt.split(' ')
+    # pick a random number of words to keep
+    keep = random.randint(1, len(initial_prompt))
+    # max of 6 words
+    keep = min(keep, 6)
+    # keep the first keep words
+    initial_prompt = ' '.join(initial_prompt[:keep])
+    prompt = prompt_generation_pipe( initial_prompt, min_length=30 )[0]['generated_text']
+    return initial_prompt,prompt
