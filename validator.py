@@ -749,8 +749,8 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
         try:
             resp = responses[i] # TextToImage class
             uid = dendrites_to_query[i]
-            for _hash in _hashes:
-                hash_already_exists = create_prompt(conn, batch_id, _hash, uid, prompt, "", resp.seed, resp.height, resp.width, time.time(), best_image_hash)
+            for j, _hash in enumerate(_hashes):
+                hash_already_exists = create_prompt(conn, batch_id, _hash, j, uid, prompt, "", resp.seed, resp.height, resp.width, time.time(), best_image_hash)
                 if hash_already_exists:
                     bt.logging.trace(f"Detected duplicate image from dendrite {dendrites_to_query[i]}")
                     hash_rewards[i] = 0

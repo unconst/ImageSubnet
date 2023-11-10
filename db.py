@@ -1,24 +1,27 @@
 import sqlite3
 import os
+import bittensor as bt
 
-# create ./db directory if it doesn't exist
-if not os.path.exists('./db'):
-    os.makedirs('./db')
 
-conn = sqlite3.connect('./db/imagenet.db')
+def CreateDB():
+    # create ./db directory if it doesn't exist
+    if not os.path.exists('./db'):
+        os.makedirs('./db')
+
+    conn = sqlite3.connect('./db/imagenet.db')
 
 # Create a cursor
-cursor = conn.cursor()
+    cursor = conn.cursor()
 
 # Create the 'hashes' table if it doesn't exist
-cursor.execute('''
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS hashes (
         hash_value TEXT PRIMARY KEY
     )
 ''')
 
 # Create the 'prompts' table if it doesn't exist
-cursor.execute('''
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS i2iprompts (
         id INTEGER PRIMARY KEY,
         batch_id INTEGER,
@@ -38,7 +41,7 @@ cursor.execute('''
 ''')
 
 # Create the 'prompts' table if it doesn't exist
-cursor.execute('''
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS prompts (
         id INTEGER PRIMARY KEY,
         batch_id INTEGER,
@@ -56,14 +59,18 @@ cursor.execute('''
 ''')
 
 # Create the 'batches' table if it doesn't exist
-cursor.execute('''
+    cursor.execute('''
     CREATE TABLE IF NOT EXISTS batches (
         id INTEGER PRIMARY KEY,
         timestamp INTEGER
     )
 ''')
 
-cursor = None
+    cursor = None
+    
+    return conn
+
+conn = CreateDB()
 
 def delete_prompt_by_id(conn, prompt_id):
     cursor = conn.cursor()
@@ -272,3 +279,19 @@ class Prompt:
     def __str__(self):
         return str(self.__dict__)
     
+
+# WIPE DATABASE IF NEEDED
+def drop_db():
+    global conn
+    # delete the database file
+    os.remove('./db/imagenet.db')
+
+    conn = CreateDB()
+    bt.logging.trace("Database reset complete!")
+
+# get batch 1 and if Timestamp of None, remove db
+first_batch = get_batch(conn, 1)
+first_element = first_batch[0]
+if(first_element.timestamp == None):
+    bt.logging.trace("Detected faulty database. Wiping database...")
+    drop_db()
