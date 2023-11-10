@@ -100,7 +100,7 @@ aspect_ratios = [(1, 1), (4, 3), (3, 4), (16, 9), (9, 16)]
 
 
 # Init the validator weights.
-alpha = 0.0001
+alpha = 0.00015
 # weights = torch.rand_like( meta.uids, dtype = torch.float32 )
 weights = torch.ones_like( meta.uids , dtype = torch.float32 )
 
@@ -199,7 +199,7 @@ async def main():
 
     # use rand int to select int between 1-10
     randomint = random.randint(1, 10)
-    if randomint == 1 and False: # Disabled for now
+    if randomint == 1:
         # get batch between 48h ago and now
         prompts = get_prompts_of_random_batch(conn, time.time() - 172800)
 
@@ -322,6 +322,8 @@ async def main():
             bt.logging.trace("All rewards are 0, skipping block")
             weights = weights * 0.993094
             return
+        
+        rewards = rewards / torch.max(rewards)
 
         # extend the rewards matrix out to the entire length of uids so it can be added into weights
         rewards = ExtendRewardMatrixToUidsLength(uids, dendrites_to_query, rewards)
@@ -593,6 +595,11 @@ def get_resolution(size_index = None, aspect_ratio_index = None):
     # calculate the width and height
     width = size
     height = size
+
+    if size_index == 0:
+        # sets smallest image possible to be 512x512
+        return (width, height)
+    
     # keep the largest side as size, and calculate the other side based on the aspect ratio
     if aspect_ratio[0] > aspect_ratio[1]:
         width = size
