@@ -21,8 +21,8 @@ bt.trace()
 current_script_dir = os.path.dirname(os.path.realpath(__file__))
 parent_dir = os.path.dirname(current_script_dir)
 sys.path.append(parent_dir)
-from db import conn, delete_prompts_by_timestamp, create_or_get_hash_id, create_prompt, create_batch, delete_prompts_by_uid
-from utils import GeneratePrompt, PHashImage, get_device, get_scoring_model, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts, models, compare_to_set, calculate_mean_dissimilarity
+from db import conn, delete_prompts_by_timestamp, create_prompt, create_batch, delete_prompts_by_uid, get_prompts_of_random_batch
+from utils import GeneratePrompt, PHashImage, check_for_updates, __version__, total_dendrites_per_query, minimum_dendrites_per_query, num_images, calculate_rewards_for_prompt_alignment, calculate_dissimilarity_rewards, get_system_fonts
 from protocol import TextToImage, ImageToImage, validate_synapse, ValidatorSettings
 check_for_updates()
 
@@ -60,20 +60,13 @@ dend = bt.dendrite( wallet = wallet )
 
 
 import torchvision.transforms as transforms
-import torch.nn as nn
-import torch.nn.functional as F
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 from utils import StableDiffusionSafetyChecker, transform
 from transformers import CLIPImageProcessor
-from fabric.utils import get_free_gpu, tile_images
+from fabric.utils import tile_images
 
 
 DEVICE = torch.device(config.device if torch.cuda.is_available() else "cpu")
-
-# For image to text generation.
-# Load the scoring model
-import ImageReward as RM
-scoring_model = RM.load("ImageReward-v1.0", device=DEVICE)
 
 # Form the dendrite pool.
 dendrite_pool = AsyncDendritePool( wallet = wallet, metagraph = meta )
