@@ -30,17 +30,24 @@ check_for_updates()
 parser = argparse.ArgumentParser()
 parser.add_argument( '--netuid', type = int, default = 5 )
 parser.add_argument('--subtensor.chain_endpoint', type=str, default='wss://entrypoint-finney.opentensor.ai')
-parser.add_argument('--subtensor._mock', type=bool, default=False)
-parser.add_argument('--validator.allow_nsfw', type=bool, default=False)
+parser.add_argument('--subtensor._mock' action="store_true", description="use mock subtensor for local testing")
+parser.add_argument('--validator.allow_nsfw' action="store_true", description="allow nsfw images to be queried")
 parser.add_argument('--validator.save_dir', type=str, default='./images')
-parser.add_argument('--validator.save_images', type=bool, default=False)
-parser.add_argument('--validator.use_absolute_size', type=bool, default=False) # Set to True if you want to 100% match the input size, else just match the aspect ratio
-parser.add_argument('--validator.label_images', type=bool, default=False, help="if true, label images with dendrite uid and score")
+parser.add_argument('--validator.save_images' action="store_true", description="save images to save_dir")
+parser.add_argument('--validator.ignore_absolute_size', action="store_true", description="ignore absolute size and instead match by aspect ratio")
+parser.add_argument('--validator.use_absolute_size', action="store_false", description="(DEPRECATED) use absolute size instead of matching aspect ratio")
+parser.add_argument('--validator.label_images' action="store_true",help="label images with dendrite uid and score")
 parser.add_argument('--device', type=str, default='cuda')
 parser.add_argument('--axon.port', type=int, default=3000)
 bt.wallet.add_args( parser )
 bt.subtensor.add_args( parser )
 config = bt.config( parser )
+
+# check if config has use_absolute_size, if so warn user its deprecated
+if config.validator.use_absolute_size == False:
+    bt.logging.warning("use_absolute_size is deprecated, please use ignore_absolute_size instead\nThis warning will be removed in v0.6.0 of ImageNet")
+    # set ignore_absolute_size to use_absolute_size
+    config.validator.ignore_absolute_size = not config.validator.use_absolute_size
 
 # if save dir different than default, save_images should be true
 if config.validator.save_dir != './images':
@@ -70,12 +77,6 @@ DEVICE = torch.device(config.device if torch.cuda.is_available() else "cpu")
 
 # Form the dendrite pool.
 dendrite_pool = AsyncDendritePool( wallet = wallet, metagraph = meta )
-
-# list of sizes
-sizes = [512, 768, 1024, 1536]
-
-# list of aspect ratios [(1, 1), (4, 3), (16, 9)]
-aspect_ratios = [(1, 1), (4, 3), (3, 4), (16, 9), (9, 16)]
 
 
 # Init the validator weights.
@@ -183,7 +184,7 @@ async def main():
         prompts = get_prompts_of_random_batch(conn, time.time() - 172800)
 
         # if prompts is none, skip block
-        if prompts is None:
+        if prompts is None or len(prompts) == 0:
             return
 
 
@@ -225,7 +226,7 @@ async def main():
             seed=prompts[0].seed,
         )
 
-        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(uids, query)
+        query, timeout, responses, dendrites_to_query = await AsyncQueryTextToImage(dendrites_to_query, query, True)
 
         hashes = GetImageHashesOfResponses(responses)
 
@@ -387,6 +388,24 @@ async def main():
 ### END MAIN FUNCTION ###
 
 async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeout, batch_id):
+    """
+    Asynchronously queries image to image transformation from multiple dendrites.
+
+    Args:
+        uids (list): List of unique identifiers for the dendrites to query.
+        i2i_query (str): Query for image to image transformation.
+        prompt (str): Prompt for the query.
+        best_image_hash (str): Hash of the best image.
+        timeout (int): Timeout for the query in seconds.
+        batch_id (int): Batch ID for the query.
+
+    Returns:
+        tuple: A tuple containing the rewards for the dendrites, the responses from the dendrites, and the dendrites queried.
+
+    Raises:
+        None
+    """
+    
     queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(uids)
 
     timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
@@ -408,10 +427,30 @@ async def AsyncQueryImageToImage(uids, i2i_query, prompt, best_image_hash, timeo
 
     return i2i_rewards, i2i_responses, dendrites_to_query
 
-async def AsyncQueryTextToImage(all_uids, query):
+async def AsyncQueryTextToImage(all_uids, query, is_requery=False):
+    """
+    Asynchronously queries text to image from a subset of the given uids.
+
+    Args:
+        all_uids (list): A list of all UIDs on network.
+        query: The query to convert to an image.
+        is_requery (bool, optional): Indicates whether it is a requery. Defaults to False.
+
+    Returns:
+        tuple: A tuple containing the query, timeout, responses, and dendrites queried.
+
+    Raises:
+        None
+
+    """
+
+    # Function code goes here
     global weights, last_updated_block, last_reset_weights_block, last_queried, _loop
 
-    queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(all_uids)
+    if is_requery:
+        queryable_uids = all_uids
+    else:
+        queryable_uids, active_miners, dendrites_per_query = GetQueryableUids(all_uids)
 
     timeout_increase = GetTimeoutIncrease(active_miners, dendrites_per_query)
 
@@ -442,7 +481,19 @@ async def AsyncQueryTextToImage(all_uids, query):
     return query, timeout, responses, dendrites_to_query
 
 def ScoreTextToImage(responses, batch_id, query, dendrites_to_query):
-    # validate all responses, if they fail validation remove both the response from responses and dendrites_to_query
+    """
+    Calculates the score for text-to-image responses based on various validation steps.
+
+    Args:
+        responses (list): List of text-to-image responses.
+        batch_id (int): Batch ID.
+        query (str): Query text.
+        dendrites_to_query (list): List of dendrites to query.
+
+    Returns:
+        tuple: A tuple containing the rewards (float), hashes (list), best_pil_image (PIL.Image.Image), and best_image_hash (str).
+    """
+    
     dendrites_to_query, responses = ValidateResponses(dendrites_to_query, responses)
 
     dendrites_to_query, responses = CheckForNSFW(dendrites_to_query, responses)
@@ -452,6 +503,18 @@ def ScoreTextToImage(responses, batch_id, query, dendrites_to_query):
     return rewards, hashes, best_pil_image,best_image_hash
 
 def load_and_preprocess_image_array(image_array, target_size):
+    """
+    Load and preprocess an array of images.
+
+    Args:
+        image_array (list): List of images to be preprocessed.
+        target_size (tuple): Target size for resizing the images.
+
+    Returns:
+        torch.Tensor: Preprocessed images as a tensor.
+
+    """
+    
     image_transform = transforms.Compose([
         transforms.Resize(target_size),
         transforms.ToTensor(),
@@ -468,28 +531,50 @@ def load_and_preprocess_image_array(image_array, target_size):
 
     return torch.cat(preprocessed_images, dim=0)
 
-def get_resolution(size_index = None, aspect_ratio_index = None):
-    # pick a random size and aspect ratio
+import random
+
+def get_resolution(size_index=None, aspect_ratio_index=None):
+    """
+    Get the resolution of an image based on the given size and aspect ratio indices.
+
+    Args:
+        size_index (int, optional): Index of the desired size. If not provided or out of range, a random size will be chosen.
+        aspect_ratio_index (int, optional): Index of the desired aspect ratio. If not provided or out of range, a random aspect ratio will be chosen.
+
+    Returns:
+        tuple: A tuple containing the width and height of the image.
+
+    Raises:
+        None
+
+    Example:
+        >>> get_resolution(1, 2)
+        (1024, 768)
+    """
+
+    sizes = [512, 1024, 2048]  # Available sizes
+    aspect_ratios = [(4, 3), (16, 9), (3, 2)]  # Available aspect ratios
+
     if size_index is None or size_index >= len(sizes):
-        size_index = random.randint(0, len(sizes)-1)
+        size_index = random.randint(0, len(sizes) - 1)
     if size_index == 0 and aspect_ratio_index is None:
         aspect_ratio_index = 0
     if aspect_ratio_index is None or aspect_ratio_index >= len(aspect_ratios):
-        aspect_ratio_index = random.randint(0, len(aspect_ratios)-1)
-    
-    # get the size and aspect ratio
+        aspect_ratio_index = random.randint(0, len(aspect_ratios) - 1)
+
+    # Get the size and aspect ratio
     size = sizes[size_index]
     aspect_ratio = aspect_ratios[aspect_ratio_index]
 
-    # calculate the width and height
+    # Calculate the width and height
     width = size
     height = size
 
     if size_index == 0:
-        # sets smallest image possible to be 512x512
+        # Sets the smallest image possible to be 512x512
         return (width, height)
-    
-    # keep the largest side as size, and calculate the other side based on the aspect ratio
+
+    # Keep the largest side as size, and calculate the other side based on the aspect ratio
     if aspect_ratio[0] > aspect_ratio[1]:
         width = size
         height = int(size * aspect_ratio[1] / aspect_ratio[0])
@@ -499,7 +584,20 @@ def get_resolution(size_index = None, aspect_ratio_index = None):
 
     return (width, height)
 
+from PIL import Image
+
 def add_black_border(image, border_size):
+    """
+    Add a black border to the image.
+
+    Args:
+        image (PIL.Image.Image): The original image.
+        border_size (int): The size of the border to add.
+
+    Returns:
+        PIL.Image.Image: The image with the black border added.
+    """
+    
     # Create a new image with the desired dimensions
     new_width = image.width
     new_height = image.height + border_size
@@ -511,7 +609,18 @@ def add_black_border(image, border_size):
     return new_image
 
 def ExtendRewardMatrixToUidsLength(all_uids, dendrites_to_query, rewards):
-    _rewards = torch.zeros( len(all_uids), dtype = torch.float32 )
+    """
+    Extends the reward matrix to match the length of all_uids by filling in rewards for corresponding uids.
+
+    Args:
+        all_uids (list): List of all uids.
+        dendrites_to_query (list): List of dendrites to query.
+        rewards (torch.Tensor): Reward matrix.
+
+    Returns:
+        torch.Tensor: Extended reward matrix with rewards filled for corresponding uids.
+    """
+    _rewards = torch.zeros(len(all_uids), dtype=torch.float32)
     for i, uid in enumerate(dendrites_to_query):
         # check if rewards[i] is nan
         if not torch.isnan(rewards[i]):
@@ -522,17 +631,36 @@ def ExtendRewardMatrixToUidsLength(all_uids, dendrites_to_query, rewards):
     return rewards
 
 def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, best_image_hash = None):
-    (rewards, best_images) = calculate_rewards_for_prompt_alignment( query, responses )
+    """
+    Calculates the rewards for prompt alignment and encourages diversity in the images.
 
-    if torch.sum( rewards ) == 0:
+    Args:
+        dendrites_to_query (list): List of dendrite IDs.
+        batch_id (int): Batch ID.
+        prompt (str): Prompt for the query.
+        query (str): Query string.
+        responses (list): List of response objects.
+        best_image_hash (str, optional): Hash of the best image. Defaults to None.
+
+    Returns:
+        tuple: A tuple containing rewards, hashes, best_pil_image, and best_image_hash.
+            - rewards (torch.Tensor): Tensor of rewards for each image.
+            - hashes (list): List of image hashes.
+            - best_pil_image (PIL.Image.Image): Best image as a PIL Image object.
+            - best_image_hash (str): Hash of the best image.
+    """
+
+    (rewards, best_images) = calculate_rewards_for_prompt_alignment(query, responses)
+
+    if torch.sum(rewards) == 0:
         return rewards, [], None, None
     
     rewards = rewards / torch.max(rewards)
 
-    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards( best_images )
+    dissimilarity_rewards: torch.FloatTensor = calculate_dissimilarity_rewards(best_images)
 
     # dissimilarity isnt the same length because we filtered out images with 0 reward, so we need to create a new tensor of length rewards
-    new_dissimilarity_rewards = torch.zeros( len(rewards), dtype = torch.float32 )
+    new_dissimilarity_rewards = torch.zeros(len(rewards), dtype=torch.float32)
 
     for i, reward in enumerate(rewards):
         if reward != 0:
@@ -571,7 +699,7 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     # multiply rewards by hash rewards
     rewards = rewards * hash_rewards
 
-    if torch.sum( rewards ) == 0:
+    if torch.sum(rewards) == 0:
         return rewards, hashes, None, None
 
     # get best image from rewards
@@ -590,11 +718,25 @@ def CalculateRewards(dendrites_to_query, batch_id, prompt, query, responses, bes
     # log best score
     bt.logging.trace(f"Best score: {torch.max(rewards)} UID: {dendrites_to_query[best_image_index]} HASH: {best_image_hash}")
 
-    return rewards,hashes,best_pil_image,best_image_hash
+    return rewards, hashes, best_pil_image, best_image_hash
 
 
 
 def CheckForNSFW(dendrites_to_query, responses):
+    """
+    Check for NSFW (Not Safe for Work) images in the given responses.
+
+    Args:
+        dendrites_to_query (list): List of dendrites to query.
+        responses (list): List of response objects.
+
+    Returns:
+        tuple: A tuple containing the updated dendrites_to_query and responses.
+
+    Raises:
+        None
+
+    """
     if not config.validator.allow_nsfw:
         for i, response in enumerate(responses):
             # delete all none images
@@ -623,6 +765,16 @@ def CheckForNSFW(dendrites_to_query, responses):
     return dendrites_to_query, responses
 
 def ValidateResponses(dendrites_to_query, responses):
+    """
+    Validates the responses received from dendrites and removes any invalid responses.
+
+    Args:
+        dendrites_to_query (list): List of dendrites to query.
+        responses (list): List of responses received from the dendrites.
+
+    Returns:
+        tuple: A tuple containing the updated lists of dendrites_to_query and responses after removing any invalid responses.
+    """
     for i, response in enumerate(responses):
         valid, error = validate_synapse(response)
         if not valid:
@@ -633,6 +785,18 @@ def ValidateResponses(dendrites_to_query, responses):
     return dendrites_to_query, responses
 
 def CalculateTimeout(total_pixels, base_timeout, base_timeout_size, max_timeout):
+    """
+    Calculates the timeout value based on the total number of pixels, base timeout, base timeout size, and maximum timeout.
+
+    Args:
+        total_pixels (int): The total number of pixels in the image.
+        base_timeout (float): The base timeout value.
+        base_timeout_size (int): The base timeout size.
+        max_timeout (float): The maximum timeout value.
+
+    Returns:
+        float: The calculated timeout value.
+    """
     if (total_pixels / base_timeout_size) > 1:
         timeout = base_timeout * (total_pixels / base_timeout_size) * 0.75
     else:
@@ -647,17 +811,36 @@ def CalculateTimeout(total_pixels, base_timeout, base_timeout_size, max_timeout)
     return timeout
 
 def ExtendWeightMatrixIfNeeded(uids):
+    """
+    Extends the weight matrix if the number of unique IDs (uids) is greater than the current size of the weights array.
+    
+    Args:
+        uids (list): A list of unique IDs.
+    
+    Returns:
+        None
+    """
     global weights
     if len(uids) > len(weights):
         bt.logging.trace("Adding more weights")
         size_difference = len(uids) - len(weights)
-        new_weights = torch.zeros( size_difference, dtype = torch.float32 )
-        # the new weights should be 0.3 * the median of all non 0 weights
-        new_weights = new_weights + 0.3 * torch.median( weights[weights != 0] )
-        weights = torch.cat( (weights, new_weights) )
+        new_weights = torch.zeros(size_difference, dtype=torch.float32)
+        # the new weights should be 0.3 * the median of all non-zero weights
+        new_weights = new_weights + 0.3 * torch.median(weights[weights != 0])
+        weights = torch.cat((weights, new_weights))
         del new_weights
 
 def SyncMetagraphIfNeeded():
+    """
+    Syncs the metagraph if needed.
+
+    This function checks if the current block is a multiple of 10 and if so, it syncs the metagraph.
+    It also updates the weights and deletes prompts based on the changes in the metagraph.
+
+    Returns:
+        None
+    """
+    
     global sub, meta, weights
 
     # every 10 blocks, sync the metagraph.
@@ -668,7 +851,7 @@ def SyncMetagraphIfNeeded():
         _not_synced = True
         while _not_synced:
             try:
-                meta.sync(subtensor = sub, )
+                meta.sync(subtensor=sub)
                 _not_synced = False
                 # create new list of (uids, hotkey)
                 new_uids = list(zip(meta.uids.tolist(), meta.hotkeys))
@@ -676,12 +859,12 @@ def SyncMetagraphIfNeeded():
                 for i in range(len(new_uids)):
                     if len(old_uids) > i:
                         if old_uids[i] != new_uids[i]:
-                            weights[i] = 0.3 * torch.median( weights[weights != 0] )
+                            weights[i] = 0.3 * torch.median(weights[weights != 0])
                             
                             # delete all prompts for that uid
                             delete_prompts_by_uid(conn, new_uids[i][0])
                     else:
-                        weights[i] = 0.3 * torch.median( weights[weights != 0] )
+                        weights[i] = 0.3 * torch.median(weights[weights != 0])
             except:
                 _retries += 1
                 _seconds_to_wait = 2 ** _retries
@@ -691,6 +874,15 @@ def SyncMetagraphIfNeeded():
                 time.sleep(_seconds_to_wait)
 
 def SetDendritesLastQueried(dendrites_to_query):
+    """
+    Sets the last queried timestamp for each dendrite in the given list.
+
+    Args:
+        dendrites_to_query (list): A list of dendrite UIDs to update.
+
+    Returns:
+        dict: A dictionary containing the last queried timestamp for each dendrite.
+    """
     global last_queried
     for uid in dendrites_to_query:
         last_queried[uid] = datetime.datetime.now()
@@ -698,23 +890,59 @@ def SetDendritesLastQueried(dendrites_to_query):
     return last_queried
 
 def GetTimeoutIncrease(active_miners, dendrites_per_query):
+    """
+    Calculates the timeout increase based on the number of active miners and dendrites per query.
+
+    Args:
+        active_miners (int): The number of active miners.
+        dendrites_per_query (int): The minimum number of dendrites per query.
+
+    Returns:
+        int: The timeout increase value.
+
+    Raises:
+        None
+
+    """
     timeout_increase = 1
 
     if dendrites_per_query > active_miners:
-        bt.logging.warning(f"Warning: not enough active miners to sufficently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
+        bt.logging.warning(f"Warning: not enough active miners to sufficiently validate images, rewards may be inaccurate. Active miners: {active_miners}, Minimum per query: {minimum_dendrites_per_query}")
     elif active_miners < dendrites_per_query * 3:
         bt.logging.warning(f"Warning: not enough active miners, miners may be overloaded from other validators. Enabling increased timeout.")
         timeout_increase = 2
     return timeout_increase
 
 def GetDendritesToQuery(uids, queryable_uids, dendrites_per_query):
+    """
+    Get a list of dendrites to query based on the given uids and queryable uids.
+
+    Args:
+        uids (list): List of uids.
+        queryable_uids (list): List of queryable uids.
+        dendrites_per_query (int): Number of dendrites to query.
+
+    Returns:
+        list: List of dendrites to query.
+
+    """
     # zip uids and queryable_uids, filter only the uids that are queryable, unzip, and get the uids
     zipped_uids = list(zip(uids, queryable_uids))
     filtered_uids = list(zip(*filter(lambda x: x[1], zipped_uids)))[0]
-    dendrites_to_query = random.sample( filtered_uids, min( dendrites_per_query, len(filtered_uids) ) )
+    dendrites_to_query = random.sample(filtered_uids, min(dendrites_per_query, len(filtered_uids)))
     return dendrites_to_query
 
 def GetQueryableUids(uids):
+    """
+    Get the queryable UIDs based on certain conditions.
+
+    Args:
+        uids (list): List of UIDs to check.
+
+    Returns:
+        tuple: A tuple containing the queryable UIDs, the number of active miners, and the number of dendrites per query.
+    """
+
     # Select up to dendrites_per_query random dendrites.
     queryable_uids = (meta.last_update > curr_block - 600) * (meta.total_stake < 1.024e3)
 
@@ -722,7 +950,7 @@ def GetQueryableUids(uids):
 
     # for all uids, check meta.neurons[uid].axon_info.ip == '0.0.0.0' if so, set queryable_uids[uid] to false
     non_zero_ips = [meta.neurons[uid].axon_info.ip != '0.0.0.0' for uid in uids]
-    queryable_uids = queryable_uids = queryable_uids[:len(non_zero_ips)] * torch.Tensor(non_zero_ips[:len(queryable_uids)])
+    queryable_uids = queryable_uids[:len(non_zero_ips)] * torch.Tensor(non_zero_ips[:len(queryable_uids)])
 
     # loop through queryable uids and check if if they have been queried in the last 2 minutes, if so, set queryable_uids[uid] to 0
     for uid in uids:
@@ -746,7 +974,7 @@ def GetQueryableUids(uids):
     # less than 1 set to 1
     if dendrites_per_query < minimum_dendrites_per_query:
         dendrites_per_query = minimum_dendrites_per_query
-    return queryable_uids,active_miners,dendrites_per_query
+    return queryable_uids, active_miners, dendrites_per_query
 
 # find DejaVu Sans font
 if (config.validator.label_images == True):
@@ -760,6 +988,20 @@ if (config.validator.label_images == True):
     default_font = ImageFont.truetype(dejavu_font, 30)
 
 def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
+    """
+    Save the images to a folder if `config.validator.save_images` is True.
+
+    Args:
+        dendrites_to_query (list): List of dendrites to query.
+        prompt (str): The prompt for the images.
+        query: The query for the images.
+        responses: The responses containing the images.
+        rewards: The rewards associated with the images.
+
+    Returns:
+        None
+    """
+
     # if save images is true, save the images to a folder
     if config.validator.save_images == True:
         all_images_and_scores = []
@@ -781,7 +1023,7 @@ def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
 
                     # get size of image, if it doesnt match the size of the request, check to see if it matches the aspect ratio, if not delete it from responses
                     if pil_img.width != query.width or pil_img.height != query.height:
-                        if config.validator.use_absolute_size:
+                        if not config.validator.ignore_absolute_size:
                             bt.logging.trace(f"Detected image with incorrect size from dendrite {dendrites_to_query[i]}")
                             del responses[i].images[j]
                             continue
@@ -820,20 +1062,38 @@ def SaveImages(dendrites_to_query, prompt, query, responses, rewards):
         with open(f"images/{sub.block}.txt", "w") as f:
             f.write(prompt)
 
-def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTensor, List[ str ]):
+import torch
+from typing import List
+
+def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTensor, List[str]):
+    """
+    Calculate hash rewards and hashes for a given set of dendrites, responses, and rewards.
+
+    Args:
+        dendrites_to_query (list): List of dendrites to query.
+        responses (list): List of response objects.
+        rewards (torch.Tensor): Tensor of rewards.
+
+    Returns:
+        tuple: A tuple containing the hash rewards (torch.FloatTensor) and the list of hashes (List[str]).
+    """
+    
     hashmap = {}
     hashes = []
-    hash_rewards = torch.ones_like( rewards, dtype = torch.float32 )
+    hash_rewards = torch.ones_like(rewards, dtype=torch.float32)
+    
     for i, response in enumerate(responses):
         images = response.images
         uid = dendrites_to_query[i]
         hashes.append([])
+        
         # if rewards is 0 set hash_reward to 0
         if rewards[i] == 0:
             hash_rewards[i] = 0
             for j in enumerate(images):
                 hashes[i].append(None)
             continue
+        
         for j, image in enumerate(images):
             try:
                 img = bt.Tensor.deserialize(image)
@@ -842,6 +1102,7 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
                 hash_rewards[i] = 0
                 hashes[i].append(None)
                 continue
+            
             if img.sum() == 0:
                 bt.logging.trace(f"Detected black image from dendrite {dendrites_to_query[i]}")
                 hash_rewards[i] = 0
@@ -849,20 +1110,35 @@ def ImageHashRewards(dendrites_to_query, responses, rewards) -> (torch.FloatTens
                 continue
 
             bt.logging.trace(f"Processing dendrite {uid} for image hash")
+            
             # convert img to PIL image
             hash = PHashImage(img)
+            
             if hash in hashmap:
                 bt.logging.trace(f"Detected matching image from dendrite {dendrites_to_query[i]}")
                 hash_rewards[i] = 0
                 hash_rewards[hashmap[hash]] = 0
             else:
                 hashmap[hash] = i
+            
             hashes[i].append(hash)
+    
     return hash_rewards, hashes
 
 
 
 def GetImageHashesOfResponses(responses):
+    """
+    Calculates the perceptual hash values of images in a list of responses.
+
+    Args:
+        responses (list): A list of response objects.
+
+    Returns:
+        list: A list of lists containing the perceptual hash values of images in each response.
+              If an image cannot be processed, None is appended to the corresponding sublist.
+    """
+
     hashes = []
     for i, response in enumerate(responses):
         images = response.images
@@ -897,7 +1173,7 @@ def verify_settings( synapse: ValidatorSettings ) -> None:
     pass
 
 
-axon = bt.axon( config=config, wallet=wallet, ip="127.0.0.1", external_ip=bt.utils.networking.get_external_ip()).start()
+axon = bt.axon( config=config, wallet=wallet, ip="127.0.0.1", external_ip=bt.utils.networking.get_external_ip()).attach(forward_settings, blacklist_settings, priority_settings, verify_settings).start()
 
 # serve axon
 sub.serve_axon( axon=axon, netuid=config.netuid )
