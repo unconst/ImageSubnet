@@ -167,6 +167,8 @@ minimum_pixels_per_5_minutes = (1024 * 1024 * 2) # minimum number of pixels befo
 
 
 def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
+    if config.miner.public:
+        return False, ""
     # check if hotkey of synapse is in meta. and if so get its position in the array
     uid = None
     axon = None
@@ -186,7 +188,7 @@ def base_blacklist(synapse: TextToImage) -> Tuple[bool, str]:
         return True, f"stake is less than min_validator_stake ({config.miner.min_validator_stake})"
     
     # Ensure that the ip of the synapse call matches that of the axon for the validator
-    if axon.ip != synapse.dendrite.ip:
+    if axon.ip != synapse.dendrite.ip and config.miner.ip_blocking:
         # if 0.0.0.0
         if axon.ip == "0.0.0.0":
             return True, "Validator has not set their ip address on the network yet, please set and try again"
