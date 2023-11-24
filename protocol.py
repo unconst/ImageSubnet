@@ -31,7 +31,7 @@ class TextToImage( bt.Synapse ):
 
 class ImageToImage( TextToImage ):
     # Width x height will get overwritten by image size
-    image: bt.Tensor = pydantic.Field( ... , allow_mutation = False) 
+    image: bt.Tensor = None
 
     # Miners must choose how to define similarity themselves based on their model
     # by default, the strength values are 0.3, 0.7, 0.9
