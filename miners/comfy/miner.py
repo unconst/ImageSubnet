@@ -91,25 +91,44 @@ class Images():
     def __init__(self, images):
         self.images = images
 
-def GenerateImage(synapse, generator):
+def GenerateImage(synapse, is_i2i = False) -> Tuple[Images, Union[str, None]]:
+    issue = VerifySynapse(synapse)
+    if issue is not None:
+        bt.logging.error(ValueError(issue))
+        return (Images([]), issue)
+    
+    bt.logging.trace("Attempting to generate image")
+    if is_i2i:
+        output_images = i2i(synapse)    
+    else:
+        output_images = t2i(synapse)
+
+    bt.logging.trace("Image generated")
+    print(output_images)
+        
+   
+    
+    return (Images(output_images), None)
+
+def VerifySynapse(synapse):
     height = synapse.height
     bt.logging.trace("Inside GenerateImage")
     if config.miner.height.min is not None and height < config.miner.height.min:
         if synapse.fixed_resolution:
-            raise ValueError(f"height ({height}) must be greater than or equal to height.min ({config.miner.height.min})")
+            return f"height ({height}) must be greater than or equal to height.min ({config.miner.height.min})"
         else:
             height = config.miner.height.min
     elif config.miner.height.max is not None and height > config.miner.height.max:
-        raise ValueError(f"height ({height}) must be less than or equal to height.max ({config.miner.height.max})")
+        return f"height ({height}) must be less than or equal to height.max ({config.miner.height.max})"
     
     width = synapse.width
     if config.miner.width.min is not None and width < config.miner.width.min:
         if synapse.fixed_resolution:
-            raise ValueError(f"width ({width}) must be greater than or equal to width.min ({config.miner.width.min})")
+            return f"width ({width}) must be greater than or equal to width.min ({config.miner.width.min})"
         else:
             width = config.miner.width.min
     elif config.miner.width.max is not None and width > config.miner.width.max:
-        raise ValueError(f"width ({width}) must be less than or equal to width.max ({config.miner.width.max})")
+        return f"width ({width}) must be less than or equal to width.max ({config.miner.width.max})"
     
     # if height and widht are different from synapse, ensure that the aspect ratio is the same to the nearest divisible by 8
     if height != synapse.height or width != synapse.width:
@@ -140,23 +159,9 @@ def GenerateImage(synapse, generator):
     # determine total pixels to generate
     total_pixels = height * width * synapse.num_images_per_prompt
     if config.miner.max_pixels is not None and total_pixels > config.miner.max_pixels:
-        raise ValueError(f"total pixels ({total_pixels}) must be less than or equal to max_pixels ({config.miner.max_pixels}), reduce image size, or num_images_per_prompt")
+        return f"total pixels ({total_pixels}) must be less than or equal to max_pixels ({config.miner.max_pixels}), reduce image size, or num_images_per_prompt"
     
-    bt.logging.trace("Attempting to generate image")
-    try:
-        # If we are doing image to image, we need to use a different pipeline.
-        image = synapse.image
-        output_images = i2i(synapse)
-    except AttributeError as e:
-        # run normal text to image pipeline
-        output_images = t2i(synapse)
-
-    bt.logging.trace("Image generated")
-    print(output_images)
-        
-   
-    
-    return Images(output_images)
+    return None
 
 usage_history = {} # keys will be uid, value will be list with timestamp and output size requested (in pixels)
 time_to_generate_history = [] # array of tuples (timestamp, pixels, time to generate)
@@ -260,21 +265,38 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
 
     start_time = time.time()
 
+    og_synapse = synapse
+
     seed = synapse.seed
 
     # Let's set a seed for reproducibility.
     if(seed == -1):
         seed = torch.randint(1000000000, (1,)).item()
 
-    generator = torch.Generator(device=DEVICE).manual_seed(seed)
+        # create new TextToImage with the seed value above
+        synapse = TextToImage(
+            text = og_synapse.text,
+            negative_prompt = og_synapse.negative_prompt,
+            height = og_synapse.height,
+            width = og_synapse.width,
+            num_images_per_prompt = og_synapse.num_images_per_prompt,
+            seed = seed,
+            nsfw_allowed = og_synapse.nsfw_allowed
+        )
 
-    output = GenerateImage(synapse, generator)
+
+    (output, error) = GenerateImage(synapse)
+
+    if error is not None:
+        raise ValueError(error)
 
     has_nsfw_concept = CheckNSFW(output, synapse) # will return all False if allow_nsfw is enabled
     if any(has_nsfw_concept):
         output.images = [image for image, has_nsfw in zip(output.images, has_nsfw_concept) if not has_nsfw]
         # try to regenerate another image once
-        output2 = GenerateImage(synapse, generator)
+        (output2, error) = GenerateImage(synapse)
+        if error is not None:
+            raise ValueError(error)
         has_nsfw_concept = CheckNSFW(output2, synapse)
         if any(has_nsfw_concept):
             output2.images = [image for image, has_nsfw in zip(output2.images, has_nsfw_concept) if not has_nsfw]
@@ -287,37 +309,18 @@ async def forward_t2i( synapse: TextToImage ) -> TextToImage:
     # copy output images to new array
     output_images = output.images.copy()
     # clear synapse images
-    synapse.images = []
+    og_synapse.images = []
 
     for image in output_images:
         img_tensor = transform(image)
-        synapse.images.append( bt.Tensor.serialize( img_tensor ) )
+        og_synapse.images.append( bt.Tensor.serialize( img_tensor ) )
 
     # validate the synapse
-    valid, error = validate_synapse(synapse)
+    valid, error = validate_synapse(og_synapse)
     if not valid:
         raise ValueError(f"Invalid synapse: {error}")
 
-    # calculate time to generate
-    time_to_generate = time.time() - start_time
-    # add time to generate to history but use the output_images length as the number of pixels
-    total_pixels_generated = sum([transform(image).shape[1] * transform(image).shape[2] for image in output_images])
-    time_to_generate_history.append([start_time, total_pixels_generated, time_to_generate])
-
-    # pop all calls that are older than 15 minutes
-    for call in time_to_generate_history:
-        if call[0] < time.time() - 900:
-            time_to_generate_history.pop(0)
-    
-    
-    if torch.rand(1) < 0.1 and len(time_to_generate_history) > 0:
-        # log out average time to generate a 512x512 image and 1024x1024 image
-        time_512 = get_estimated_time_to_generate_image(512,512)
-        time_1024 = get_estimated_time_to_generate_image(1024,1024)
-        # have a random chance of logging 10% of calls
-        bt.logging.trace(f"In the last 15m the average time to generate a 512x512 image took {time_512}s and a 1024x1024 image took {time_1024}s")
-
-    return synapse
+    return og_synapse
 
 def get_estimated_time_to_generate_image(width, height):
     time_to_generate_pixel = get_time_to_generate_pixel()
@@ -351,20 +354,36 @@ async def forward_i2i( synapse: ImageToImage ) -> ImageToImage:
 
     seed = synapse.seed
 
+    og_synapse = synapse
+
     # Let's set a seed for reproducibility.
     if(seed == -1):
         seed = torch.randint(1000000000, (1,)).item()
 
-    generator = torch.Generator(device=DEVICE).manual_seed(seed)
+        # create new ImageToImage with the seed value above
+        synapse = ImageToImage(
+            image = og_synapse.image,
+            seed = seed,
+            height = og_synapse.height,
+            width = og_synapse.width,
+            num_images_per_prompt = og_synapse.num_images_per_prompt,
+            fixed_resolution = og_synapse.fixed_resolution
+        )
+    
+    
 
-    output = GenerateImage(synapse, generator)
-    print(output.images)
+    (output, error) = GenerateImage(synapse)
+
+    if error is not None:
+        raise ValueError(error)
 
     has_nsfw_concept = CheckNSFW(output, synapse) # will return all False if allow_nsfw is enabled
     if any(has_nsfw_concept):
         output.images = [image for image, has_nsfw in zip(output.images, has_nsfw_concept) if not has_nsfw]
         # try to regenerate another image once
-        output2 = GenerateImage(synapse, generator)
+        (output2, error) = GenerateImage(synapse)
+        if error is not None:
+            raise ValueError(error)
         has_nsfw_concept = CheckNSFW(output2, synapse)
         if any(has_nsfw_concept):
             output2.images = [image for image, has_nsfw in zip(output2.images, has_nsfw_concept) if not has_nsfw]
@@ -377,13 +396,13 @@ async def forward_i2i( synapse: ImageToImage ) -> ImageToImage:
     # copy output images to new array
     output_images = output.images.copy()
     # clear synapse images
-    synapse.images = []
+    og_synapse.images = []
 
     for image in output_images:
         img_tensor = transform(image)
-        synapse.images.append( bt.Tensor.serialize( img_tensor ) )
+        og_synapse.images.append( bt.Tensor.serialize( img_tensor ) )
 
-    return synapse
+    return og_synapse
 
 
 def blacklist_i2i( synapse: ImageToImage ) -> Tuple[bool, str]:
