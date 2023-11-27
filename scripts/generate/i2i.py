@@ -341,7 +341,14 @@ async def main():
         zipped.sort(key=lambda x: inverted_rewards[_uids.index(x[1])], reverse=True)
 
         # get back images and tile them
-        images = list(zip(*zipped))[0]
+        responses = list(zip(*zipped))[0]
+        # get first images[0] result for each response in responses
+        images = [response.images[0] for response in responses]
+        # sometimes images is None, so we need to filter out all None
+        images = [image for image in images if image is not None]
+
+        # deserialize images
+        images = [transforms.ToPILImage()( bt.Tensor.deserialize(image) )for image in images]
 
         # tile images
         images_to_tile = []
