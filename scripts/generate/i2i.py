@@ -343,7 +343,8 @@ async def main():
         # get back images and tile them
         responses = list(zip(*zipped))[0]
         # get first images[0] result for each response in responses
-        images = [response.images[0] for response in responses]
+        # sometimes array is length 0 though
+        images = [response.images[0] if len(response.images) > 0 else None for response in responses]
         # sometimes images is None, so we need to filter out all None
         images = [image for image in images if image is not None]
 
