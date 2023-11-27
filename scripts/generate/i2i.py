@@ -300,6 +300,7 @@ async def main():
         # image to image
         query = ImageToImage(
             image = bt.Tensor.serialize(transform(best_image)),
+            text = prompt,
             negative_prompt = "",
             height = 768,
             width = 768,
