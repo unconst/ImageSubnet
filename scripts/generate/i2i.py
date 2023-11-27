@@ -35,13 +35,13 @@ bt.logging.trace("Synced!")
 prompts = ["anime girl, anime style drawing, cherry blossom in the background"]
 
 # check if ./prompts.txt exists, if so, read it and set prompts to that
-if os.path.exists('./prompts.txt'):
-    bt.logging.trace("Found prompts.txt, using prompts from there")
-    with open('./prompts.txt') as f:
-        prompts = f.readlines()
-        prompts = [prompt.strip() for prompt in prompts]
-else:
-    bt.logging.trace("No prompts.txt found, using default prompts")
+# if os.path.exists('./prompts.txt'):
+#     bt.logging.trace("Found prompts.txt, using prompts from there")
+#     with open('./prompts.txt') as f:
+#         prompts = f.readlines()
+#         prompts = [prompt.strip() for prompt in prompts]
+# else:
+#     bt.logging.trace("No prompts.txt found, using default prompts")
 
 uids = metagraph.uids
 
@@ -306,7 +306,7 @@ async def main():
             width = 768,
             num_images_per_prompt = 1,
             seed = -1,
-            similarity = "low"
+            similarity = "high"
             )
         
         # send out request
@@ -319,12 +319,20 @@ async def main():
         if not os.path.exists(f'imgoutputs-i2i/{curr_block}'):
             os.makedirs(f'imgoutputs-i2i/{curr_block}')
 
+        # get first images[0] result for each response in responses
+        # sometimes array is length 0 though
+        images = [response.images[0] if len(response.images) > 0 else None for response in responses]
+        # sometimes images is None, so we need to filter out all None
+        images = [image for image in images if image is not None]
+        images_to_tile = []
+
         # save all images by `imgoutputs-i2i/0[uid]-[score].png`
         for i, image in enumerate(responses):
             if image is None:
                 continue
             try:
                 # resize image to 512x512
+                images_to_tile.append(image.resize((int(query.width * 0.5), int(query.height * 0.5))))
                 image = image.resize((512, 512))
                 image.save(f'imgoutputs-i2i/{curr_block}/{pad(_uids[i])}-{trim(old_rewards[i])}-{trim(rewards[i])}-{trim(inverted_rewards[i])}.png')
                 bt.logging.trace(f"Saved image for uid {_uids[i]}")
