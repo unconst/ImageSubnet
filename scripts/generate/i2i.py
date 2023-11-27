@@ -299,12 +299,13 @@ async def main():
         
         # image to image
         query = ImageToImage(
-            image = bt.Tensor.serialize(transform(image)),
+            image = bt.Tensor.serialize(transform(best_image)),
             negative_prompt = "",
             height = 768,
             width = 768,
             num_images_per_prompt = 1,
             seed = -1,
+            similarity = "low"
             )
         
         # send out request
