@@ -1098,7 +1098,7 @@ def GetImageHashesOfResponses(responses):
     return hashes
 
 async def forward_settings( synapse: ValidatorSettings ) -> ValidatorSettings:
-    synapse._version = __version__
+    synapse.version = __version__
     synapse.nsfw_allowed = config.miner.allow_nsfw
     return synapse
 
