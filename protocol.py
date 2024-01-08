@@ -40,12 +40,12 @@ class ImageToImage( TextToImage ):
     required_hash_fields: list[str] = pydantic.Field(  ["text", "negative_prompt", "height", "width", "num_images_per_prompt", "seed", "nsfw_allowed", "image", "similarity"] , allow_mutation = False)
 
 class ValidatorSettings( bt.Synapse ):
-    _version: list[int] = pydantic.Field( [0, 0, 1] , allow_mutation = False)
+    version: list[int] = pydantic.Field( [0, 0, 1] , allow_mutation = False)
     nsfw_allowed: bool
 
 
 class MinerSettings( bt.Synapse ):
-    _version: list[int] = pydantic.Field( [0, 0, 1] , allow_mutation = False)
+    version: list[int] = pydantic.Field( [0, 0, 1] , allow_mutation = False)
     is_public: bool # set to true if you want anyone (non validator) to query your miner
     min_validator_stake: int # minimum stake required to query this miner as a validator
     nsfw_allowed: bool
