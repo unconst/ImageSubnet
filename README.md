@@ -1,8 +1,8 @@
 # ImageSubnet
 
-Image Subnet, or text2image, is built by default to host and run Stable Diffusion models. However, it is adaptable, and any model can be run on the network that takes in a prompt, width, and height paramaters.
+Image Subnet, or text2image, is built by default to host and run Stable Diffusion models. However, it is adaptable, and any model can be run on the network that takes in a prompt, width, and height parameters.
 
-The Validator is built such that it ranks miners images on aesthetic and how closely they match the given prompt. Also, images which are too similiar in style will be slightly penalized to promote diverisity among image models hosted on miners.
+The Validator is built such that it ranks miners images on aesthetic and how closely they match the given prompt. Also, images which are too similiar in style will be slightly penalized to promote diversity among image models hosted on miners.
 
 ## Getting Started
 
